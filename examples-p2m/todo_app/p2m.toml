@@ -1,0 +1,20 @@
+[project]
+name = "TodoApp"
+version = "1.0.0"
+entry = "main.py"
+
+[build]
+target = ["android", "ios", "web", "flutter", "react-native"]
+generator = "flutter"
+llm_provider = "openai"
+llm_model = "gpt-4o"
+output_dir = "./build"
+cache = true
+
+[devserver]
+port = 3001
+hot_reload = true
+mobile_frame = true
+
+[style]
+system = "tailwind"

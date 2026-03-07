@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" width="200" height="60">
+  <circle cx="30" cy="30" r="24" fill="#ea1d2c"/>
+  <text x="30" y="35" font-family="Arial,sans-serif" font-size="10" font-weight="bold" fill="white" text-anchor="middle">P2M</text>
+  <text x="65" y="38" font-family="Arial,sans-serif" font-size="22" font-weight="bold" fill="#ea1d2c">Food</text>
+</svg>

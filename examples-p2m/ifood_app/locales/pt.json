@@ -1,0 +1,17 @@
+{
+  "app_name": "P2M Food",
+  "search_placeholder": "Buscar restaurantes...",
+  "nearby_restaurants": "Restaurantes próximos",
+  "category_all": "Todos",
+  "category_pizza": "Pizza",
+  "category_sushi": "Sushi",
+  "category_burger": "Burger",
+  "category_tacos": "Tacos",
+  "category_dessert": "Sobremesa",
+  "delivery_time_suffix": "min",
+  "menu": "Cardápio",
+  "add": "Adicionar",
+  "items": "itens",
+  "clear_cart": "Limpar carrinho",
+  "open_modal_label": "Ver cardápio"
+}
