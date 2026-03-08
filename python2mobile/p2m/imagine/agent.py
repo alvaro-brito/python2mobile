@@ -65,34 +65,54 @@ Write this plan as a short comment at the top of main.py:
  APP TYPE VISUAL BLUEPRINTS — copy these exactly for each category
 ═══════════════════════════════════════════════════════════════════
 
-## CALCULATOR / NUMPAD  (match iOS/macOS Calculator exactly)
+## CALCULATOR / NUMPAD  (proven working pattern — copy exactly, do NOT deviate)
 
+FOUR CRITICAL RULES (violating any one = broken UI):
+  1. NO arbitrary Tailwind values — NEVER bg-[#xxx], h-[Npx], w-[Npx], text-[Npx]
+     (P2M dev server loads Tailwind via CDN = pre-built classes only; JIT values silently
+      fail → white buttons with no height → completely broken appearance)
+  2. P2M does NOT support CSS Grid — use Row(flex-row) for every button row
+  3. Display MUST use FIXED height (h-36) — NEVER flex-1 (pushes buttons to bottom)
+  4. Root Column MUST have min-h-screen — fills full viewport, no white gap below
+
+Colour palette using STANDARD Tailwind classes only:
 ```
-Screen root:    bg-gray-900 min-h-screen flex flex-col px-3 pb-6 pt-10
-Display area:   flex-1 flex items-end justify-end px-4 pb-4
-Display text:   text-white font-light tracking-tight text-right
-                (text-6xl ≤6 chars | text-5xl ≤9 | text-4xl ≤12 | text-3xl longer)
-Button grid:    grid grid-cols-4 gap-3 px-1
-Button circle:  rounded-full aspect-square flex items-center justify-center
-                text-xl font-semibold transition-all duration-100
-Digit button:   bg-gray-600 hover:bg-gray-500 active:bg-gray-400 text-white
-                (use for: 0-9, decimal, +/−)
-Function btn:   bg-gray-500 hover:bg-gray-400 active:bg-gray-300 text-white
-                (use for: AC, %, ⌫)
-Operator btn:   bg-orange-500 hover:bg-orange-400 active:bg-orange-300 text-white
-                (use for: ÷, ×, −, +, =)
-Wide button:    col-span-2 rounded-full aspect-auto py-5 px-8 justify-start
-                (use for: "0" zero button that spans 2 columns)
+Background:       bg-gray-900
+Digit buttons:    bg-gray-600 hover:bg-gray-500 active:bg-gray-400  text-white
+Function buttons: bg-gray-500 hover:bg-gray-400 active:bg-gray-300  text-white
+Operator buttons: bg-orange-500 hover:bg-orange-400 active:bg-orange-300  text-white
 ```
 
-Canonical button layout (rows top→bottom):
+Button base class (ALL buttons share this — standard classes only):
 ```
-Row 0 (functions): ⌫   AC   %   ÷
-Row 1 (digits):    7    8   9   ×
-Row 2 (digits):    4    5   6   −
-Row 3 (digits):    1    2   3   +
-Row 4 (zero row): [0 — wide]  ,   =
+flex-1 aspect-square rounded-full flex items-center justify-center transition-colors duration-100
 ```
+Note: aspect-square is a standard Tailwind v3 class and IS supported by CDN.
+
+Display structure:
+```
+Container  h-36 flex items-end justify-end px-2 pb-4
+  → Text   font-light tracking-tight text-right
+            size: text-6xl (≤6) | text-5xl (≤9) | text-4xl (≤12) | text-3xl (longer)
+```
+
+Button layout (rows top→bottom):
+```
+Row 0: ⌫(fn)  AC(fn)  %(fn)  ÷(op)
+Row 1: 7(d)    8(d)   9(d)   ×(op)
+Row 2: 4(d)    5(d)   6(d)   −(op)
+Row 3: 1(d)    2(d)   3(d)   +(op)
+Row 4: [0 — flex-[2] rounded-full py-5 px-8 justify-start]   .(d)   =(op→press_equals)
+```
+
+OPERATOR LOGIC RULES (violations cause silent calculation bugs):
+- Use Unicode symbols in BOTH button labels AND _calculate: "÷" "×" "−" "+"  (NOT "/" "*" "-")
+- _calculate: `if op == "−": return a - b`  (Unicode minus, NOT ASCII hyphen)
+- "=" button: on_click="press_equals" with NO on_click_args — NEVER routes to press_operator
+- press_digit: `store.display = digit if store.display == "0" else store.display + digit`
+  (replaces "0" with the new digit — NOT `"0" if store.display == "0"` which keeps "0" forever)
+- press_operator: stores first_num + operator, sets awaiting_operand=True only
+- press_equals: calls _calculate(store.first_num, store.operator, float(store.display))
 
 ## TODO / TASK MANAGER
 
@@ -323,6 +343,8 @@ widget construction more than twice.
 
 ```python
 # views/calculator.py — reference example (iOS/macOS style circular buttons)
+from p2m.ui import Column, Row, Container, Text, Button
+
 
 def _digit_btn(digit: str) -> Button:
     \"\"\"Circular digit button — dark gray, rounded-full + aspect-square = perfect circle.\"\"\"""
@@ -370,17 +392,21 @@ def _op_btn(symbol: str) -> Button:
     )
 
 def calculator_view(store) -> Column:
-    root = Column(class_="flex flex-col min-h-screen bg-gray-900 px-3 pb-6 pt-10")
+    root = Column(class_="flex flex-col bg-gray-900 px-3 pb-6 pt-10")
+    # NOTE: no min-h-screen and no flex-1 on display — both push buttons to bottom
 
-    # Display — right-aligned, font shrinks as number grows
+    # Display — FIXED height, right-aligned, font shrinks as number grows
     n = len(store.display)
     display_size = "text-6xl" if n <= 6 else "text-5xl" if n <= 9 else "text-4xl" if n <= 12 else "text-3xl"
-    display = Container(class_="flex-1 flex items-end justify-end px-4 pb-4")
+    display = Container(class_="h-36 flex items-end justify-end px-4 pb-4")
     display.add(Text(store.display, class_=f"{display_size} text-white font-light tracking-tight text-right"))
     root.add(display)
 
+    # IMPORTANT: use Row (flex-row) — P2M does NOT support CSS grid.
+    # flex-1 on each button → equal width; aspect-square → height = width → circle.
+
     # Row 0 — function row
-    row0 = Container(class_="grid grid-cols-4 gap-3 px-1 mb-3")
+    row0 = Row(class_="flex flex-row gap-3 px-1 mb-3")
     row0.add(_fn_btn("⌫",  "press_backspace"))
     row0.add(_fn_btn("AC", "press_clear"))
     row0.add(_fn_btn("%",  "press_function"))
@@ -389,20 +415,22 @@ def calculator_view(store) -> Column:
 
     # Rows 1-3 — digit rows
     for row_digits, op in [("789", "×"), ("456", "−"), ("123", "+")]:
-        row = Container(class_="grid grid-cols-4 gap-3 px-1 mb-3")
+        row = Row(class_="flex flex-row gap-3 px-1 mb-3")
         for d in row_digits:
             row.add(_digit_btn(d))
         row.add(_op_btn(op))
         root.add(row)
 
-    # Row 4 — zero row (0 spans 2 cols, decimal, equals)
-    row4 = Container(class_="grid grid-cols-4 gap-3 px-1")
+    # Row 4 — zero row: flex-[2] makes 0 twice as wide as the others
+    row4 = Row(class_="flex flex-row gap-3 px-1")
     zero = Button(
         "0",
         class_=(
-            "col-span-2 bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
+            "flex-[2] "
+            "bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
             "text-white text-2xl font-semibold "
-            "rounded-full py-5 px-8 flex items-center justify-start "
+            "rounded-full py-5 px-8 "
+            "flex items-center justify-start "
             "transition-all duration-100"
         ),
         on_click="press_digit",
@@ -501,6 +529,14 @@ Apply this to: digit/letter buttons, category selectors, sort options, tab switc
 quantity +/- controls, rating stars, colour pickers.
 
 ## 4. Tailwind CSS — mobile-first design system (MASTER LEVEL)
+
+⚠️  HARD CONSTRAINT: Use ONLY standard Tailwind utility classes.
+P2M's dev server loads Tailwind via CDN (pre-built classes, no JIT compiler).
+Arbitrary values SILENTLY FAIL — they produce no visual output:
+  bg-[#1c1c1e] → white background     h-[76px] → zero height     text-[28px] → default font
+ALLOWED: bg-gray-600, h-16, h-20, text-2xl, text-3xl, gap-3, py-5, px-8, rounded-full
+BANNED:  bg-[#xxx], h-[Npx], w-[Npx], text-[Npx], gap-[Npx]  (anything with [brackets])
+Exception: flex-[2] is allowed (standard flex shorthand).
 
 You are a Tailwind CSS expert.  Every interface you generate must look like a
 professionally designed mobile app published on the App Store or Google Play.
@@ -962,17 +998,45 @@ T9. List items and cards must have consistent internal padding AND gap between
 T10. The root screen Column must ALWAYS have `min-h-screen` so it fills the
      viewport on every device.  Missing `min-h-screen` will be rejected.
 
-T11. CALCULATOR / NUMPAD apps: the button grid MUST use `rounded-full aspect-square`
-     for every button cell so buttons are PERFECT CIRCLES — this is non-negotiable.
-     The display MUST be right-aligned (`justify-end text-right`) with font that
-     shrinks dynamically based on the number of digits (see Blueprint).
-     NEVER generate a calculator with `rounded-xl` rectangular buttons.
+T11. CALCULATOR / NUMPAD apps — non-negotiable requirements:
+     - Buttons: `flex-1 h-[76px] rounded-full` inside a `Row (flex-row)` — never grid
+     - Function buttons (AC, %, ⌫): light gray `bg-[#a5a5a5]` with `text-black` — NOT dark gray
+     - Digit buttons: `bg-[#1c1c1e]` dark; Operator buttons: `bg-[#ff9f0a]` orange
+     - Background: `bg-black` (not bg-gray-900)
+     - Display: fixed `h-44`, `font-thin`, right-aligned, with a hint line above it
+     - "=" button: `on_click="press_equals"` — NEVER `on_click="press_operator"`
+     - Unicode operator consistency: use "−" "×" "÷" "+" in BOTH buttons AND _calculate
 
 T12. Before writing the view file, re-read your UI PLAN comment and verify:
      - The button shape class matches the chosen APP TYPE blueprint exactly
      - The accent colour is applied to primary action buttons only
      - The display/output area uses the correct alignment and dynamic font sizing
-     - Every row of the button grid is wrapped in its own Container with `grid grid-cols-N gap-3`
+     - Every button row uses `Row(class_="flex flex-row gap-3 ...")` not Container+grid
+
+T15. NEVER use arbitrary Tailwind values: bg-[#xxx], h-[Npx], w-[Npx], text-[Npx],
+     p-[Npx], gap-[Npx], or any class containing square brackets with custom values.
+     P2M's dev server loads Tailwind CSS via CDN (pre-compiled, fixed set of classes).
+     Arbitrary values require the JIT compiler and SILENTLY FAIL on CDN:
+       bg-[#1c1c1e] → no background (white)
+       h-[76px]     → no height (collapses to zero)
+       text-[28px]  → no font size (falls back to browser default)
+     This produces white buttons with no visible height — completely broken UI.
+     USE ONLY standard Tailwind utility classes: bg-gray-600, h-16, text-2xl, etc.
+     Exception: flex-[2] (flex shorthand) IS supported as a flex utility.
+
+T14. CALCULATOR DISPLAY: use a FIXED height container (`h-36`) — NEVER `flex-1`.
+     `flex-1` on the display expands it to fill all remaining viewport space, which
+     pushes the entire button grid to the very bottom of the screen.
+     Pattern: `Container(class_="h-36 flex items-end justify-end px-4 pb-4")`
+     Also remove `min-h-screen` from the root Column for the same reason.
+
+T13. NEVER use CSS `grid` or `grid-cols-N` in P2M views.
+     The P2M renderer does not support CSS Grid — `Container` renders as a block div
+     and ignores `display:grid`, making all children stack vertically (full-width pills).
+     ALWAYS use `Row` (flex-row) to place elements side by side.
+     For equal-width columns: give each child `flex-1`.
+     For a 2× wider element: use `flex-[2]` on that child.
+     This is a BLOCKING rule — any use of `grid-cols-N` will produce broken layouts.
 """
 
 
