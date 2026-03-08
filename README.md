@@ -395,18 +395,87 @@ pip install python2mobile
 pip install agno          # AI agent support (required for p2m build)
 ```
 
-### LLM API key
+---
+
+## API Keys & Environment Variables
+
+P2M requires an LLM API key to run the build pipeline (`p2m build`) and the project generator (`p2m imagine`). Keys are resolved in the following priority order:
+
+```mermaid
+flowchart LR
+    A["1. p2m.toml\n[llm.openai]\napi_key = 'sk-...'"] --> RESOLVED
+    B["2. P2M_&lt;PROVIDER&gt;_API_KEY\ne.g. P2M_OPENAI_API_KEY"] --> RESOLVED
+    C["3. Standard env var\nOPENAI_API_KEY\nANTHROPIC_API_KEY"] --> RESOLVED
+    D["4. --api-key flag\n(CLI only)"] --> RESOLVED
+    RESOLVED(["Key resolved"])
+```
+
+### Option 1 — Environment variable (recommended)
 
 ```bash
-# OpenAI (recommended)
+# OpenAI
 export OPENAI_API_KEY="sk-..."
 
-# Anthropic
+# Anthropic (Claude)
 export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Ollama (local, no key needed)
-export OLLAMA_BASE_URL="http://localhost:11434"
 ```
+
+Add to `~/.zshrc` or `~/.bashrc` to persist across sessions.
+
+### Option 2 — P2M-specific variable
+
+Useful when you have multiple projects with different keys:
+
+```bash
+export P2M_OPENAI_API_KEY="sk-..."
+export P2M_ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### Option 3 — `p2m.toml` (per-project)
+
+```toml
+[llm.openai]
+api_key = "sk-..."
+model = "gpt-4o"
+
+[llm.anthropic]
+api_key = "sk-ant-..."
+model = "claude-sonnet-4-6"
+```
+
+### Option 4 — CLI flag
+
+```bash
+p2m build --target android --api-key "sk-..."
+p2m imagine "a todo app" --provider anthropic --api-key "sk-ant-..."
+```
+
+### Provider reference
+
+| Provider | Env var | P2M-specific var | Default model | Supports `p2m build` |
+|---|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `P2M_OPENAI_API_KEY` | `gpt-4o` | Yes |
+| `anthropic` | `ANTHROPIC_API_KEY` | `P2M_ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | Yes |
+| `ollama` | `OLLAMA_BASE_URL` | — | `llama2` | No (legacy only) |
+| `compatible` | — | `P2M_COMPATIBLE_API_KEY` | custom | No (legacy only) |
+
+> **Note:** The AI agent pipeline (`p2m build`, `p2m imagine` with Agno) only supports **`openai`** and **`anthropic`**. Ollama and compatible providers are available for the legacy LLM generator only.
+
+### Configuring the provider in `p2m.toml`
+
+```toml
+[build]
+llm_provider = "openai"    # openai | anthropic | ollama | compatible
+llm_model = "gpt-4o"
+```
+
+### Verify your key is detected
+
+```bash
+p2m info
+```
+
+This command shows the active provider, model, and whether an API key is configured.
 
 ---
 
@@ -503,6 +572,8 @@ model = "claude-sonnet-4-6"
 base_url = "http://localhost:11434"
 model = "qwen3-coder:latest"
 ```
+
+> See [API Keys & Environment Variables](#api-keys--environment-variables) for the full key resolution order and all configuration options.
 
 ---
 
