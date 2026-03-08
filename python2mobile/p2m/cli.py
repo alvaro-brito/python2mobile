@@ -325,12 +325,13 @@ system = "tailwind"
 @click.option("--provider", default="openai", help="LLM provider: openai, anthropic")
 @click.option("--model", default=None, help="Model name (defaults based on provider)")
 @click.option("--api-key", default=None, help="API key (or use environment variable)")
+@click.option("-n", "--name", default=None, help="Project name and output directory (snake_case)")
 @click.option("--output", default=None, help="Output directory (defaults to project name)")
 @click.option("--no-agent", is_flag=True, help="Use legacy single-file generator instead of agent")
 @click.option("--base-url", default=None, help="Base URL for OpenAI-compatible provider")
 @click.option("--x-api-key", default=None, help="Custom API key header (openai-compatible)")
 @click.option("--no-validate", is_flag=True, help="Skip validation (legacy mode only)")
-def imagine(description: str, provider: str, model: str, api_key: str,
+def imagine(description: str, provider: str, model: str, api_key: str, name: str,
             output: str, no_agent: bool, base_url: str, x_api_key: str,
             no_validate: bool):
     """Generate a complete P2M project from a natural language description"""
@@ -343,13 +344,23 @@ def imagine(description: str, provider: str, model: str, api_key: str,
     use_agent = not no_agent and imagine_agent_available(provider, api_key)
 
     if use_agent:
-        # ── Agent mode: full multi-file project ──────────────────────────────
-        # Derive a short snake_case project name from the first 3 meaningful words
-        _stopwords = {"a", "an", "the", "with", "and", "or", "of", "to", "for",
-                      "in", "on", "at", "by", "from", "that", "this", "is", "are"}
-        _words = [w for w in re.sub(r"[^a-z0-9 ]", "", description.lower()).split()
-                  if w not in _stopwords]
-        project_name = "_".join(_words[:3]) or "p2m_app"
+        # ── Resolve project name ──────────────────────────────────────────────
+        if name:
+            # Sanitise: lowercase, replace spaces/hyphens with underscores
+            project_name = re.sub(r"[^a-z0-9_]", "_", name.strip().lower()).strip("_") or "p2m_app"
+        elif output:
+            project_name = re.sub(r"[^a-z0-9_]", "_", output.strip().lower()).strip("_") or "p2m_app"
+        else:
+            # Prompt user — no spaces allowed
+            while True:
+                raw = click.prompt("Project name (snake_case, no spaces)")
+                project_name = re.sub(r"[^a-z0-9_]", "_", raw.strip().lower()).strip("_")
+                if project_name:
+                    if project_name != raw.strip():
+                        click.echo(f"  → Sanitised to: {project_name}")
+                    break
+                click.echo("  Name cannot be empty. Try again.")
+
         output_dir = output or project_name
 
         click.echo(f"🤖 Using Agno agent ({provider})...")
@@ -370,6 +381,22 @@ def imagine(description: str, provider: str, model: str, api_key: str,
         except (ImportError, RuntimeError) as exc:
             click.echo(f"❌ Agent error: {exc}", err=True)
             sys.exit(1)
+
+        # ── Pass 1: deterministic design + syntax fixes ───────────────────
+        click.echo("\n🔧 Running design validator...")
+        from p2m.imagine.design_validator import fix_project, validate_project
+        fix_project(output_dir, verbose=True)
+
+        # ── Pass 2: syntax + logic checks ────────────────────────────────
+        click.echo("🔍 Running code validator...")
+        valid = validate_project(output_dir, verbose=True)
+        if not valid:
+            click.echo(
+                "\n⚠️  Syntax/logic issues found above. "
+                "Run `p2m run --skip-validation` to see the full error, "
+                "or fix the files before running.",
+                err=True,
+            )
 
         click.echo(f"\n✅ Project generated in: {output_dir}/")
         click.echo(f"\n💡 Next steps:")
@@ -439,9 +466,9 @@ def test(path, verbose):
 @cli.command()
 def info():
     """Show project information"""
-    
+
     config = Config()
-    
+
     click.echo("📱 Python2Mobile Project Info")
     click.echo(f"  Name: {config.project.name}")
     click.echo(f"  Version: {config.project.version}")
@@ -450,6 +477,47 @@ def info():
     click.echo(f"  Generator: {config.build.generator}")
     click.echo(f"  LLM Provider: {config.llm.provider}")
     click.echo(f"  LLM Model: {config.llm.model}")
+
+    import p2m as _p2m
+    import importlib.util as _ilu
+    click.echo("")
+    click.echo("🔧 Installation")
+    click.echo(f"  Source  : {Path(_p2m.__file__).parent.parent}")
+    click.echo(f"  Python  : {sys.executable}")
+    click.echo(f"  CLI     : {_ilu.find_spec('p2m.cli').origin}")
+
+
+@cli.command(name="list")
+def list_installations():
+    """List all p2m installations found in sys.path"""
+    import importlib.util as _ilu
+
+    click.echo("🔍 Searching for p2m installations...\n")
+
+    seen = set()
+    found = []
+
+    for path_entry in sys.path:
+        p = Path(path_entry) / "p2m" / "__init__.py"
+        if p.exists():
+            resolved = str(p.resolve())
+            if resolved not in seen:
+                seen.add(resolved)
+                found.append(p.parent.parent)
+
+    if not found:
+        click.echo("  No p2m installations found in sys.path.")
+        return
+
+    import p2m as _active
+    active_dir = str(Path(_active.__file__).parent.parent.resolve())
+
+    for install_dir in found:
+        marker = " ◀ active" if str(install_dir.resolve()) == active_dir else ""
+        click.echo(f"  {install_dir}{marker}")
+
+    if len(found) > 1:
+        click.echo("\n💡 To switch, activate the desired virtualenv or adjust PYTHONPATH.")
 
 
 def main():

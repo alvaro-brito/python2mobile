@@ -85,9 +85,13 @@ Operator buttons: bg-orange-500 hover:bg-orange-400 active:bg-orange-300  text-w
 
 Button base class (ALL buttons share this — standard classes only):
 ```
-flex-1 aspect-square rounded-full flex items-center justify-center transition-colors duration-100
+flex-1 py-5 rounded-full flex items-center justify-center transition-colors duration-100
 ```
-Note: aspect-square is a standard Tailwind v3 class and IS supported by CDN.
+⚠️  NEVER use `aspect-square` on flex-1 buttons.
+    In P2M's renderer, aspect-square on a flex-1 item collapses the button to its
+    content height (the text size), making tiny unusable circles instead of full-width buttons.
+    Use `py-5` (explicit padding) to control height. The buttons will be pill-shaped
+    (wider than tall) and fill the row evenly — this is the correct, proven behaviour.
 
 Display structure:
 ```
@@ -342,71 +346,45 @@ category chips…) ALWAYS extract a private factory function. Never inline the s
 widget construction more than twice.
 
 ```python
-# views/calculator.py — reference example (iOS/macOS style circular buttons)
+# views/calculator.py — proven working reference
+# KEY: py-5 for height + flex-1 for width. NEVER aspect-square (collapses to content size).
+# NEVER arbitrary Tailwind values: bg-[#xxx], h-[Npx] — CDN only supports standard classes.
 from p2m.ui import Column, Row, Container, Text, Button
 
 
+_BTN   = "flex-1 py-5 rounded-full flex items-center justify-center transition-colors duration-100"
+_DIGIT = f"{_BTN} bg-gray-600 hover:bg-gray-500 active:bg-gray-400 text-white text-2xl font-semibold"
+_FN    = f"{_BTN} bg-gray-500 hover:bg-gray-400 active:bg-gray-300 text-white text-xl font-semibold"
+_OP    = f"{_BTN} bg-orange-500 hover:bg-orange-400 active:bg-orange-300 text-white text-2xl font-bold"
+# flex-1 = equal width distribution in Row; py-5 = explicit height; NO aspect-square (collapses to text height)
+
+
 def _digit_btn(digit: str) -> Button:
-    \"\"\"Circular digit button — dark gray, rounded-full + aspect-square = perfect circle.\"\"\"""
-    return Button(
-        digit,
-        class_=(
-            "bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
-            "text-white text-2xl font-semibold "
-            "rounded-full aspect-square "          # ← rounded-full makes it circular
-            "flex items-center justify-center "
-            "transition-all duration-100"
-        ),
-        on_click="press_digit",
-        on_click_args=[digit],
-    )
+    return Button(digit, class_=_DIGIT, on_click="press_digit", on_click_args=[digit])
+
 
 def _fn_btn(label: str, handler: str) -> Button:
-    \"\"\"Circular function button — medium gray (AC, %, backspace).\"\"\"""
-    return Button(
-        label,
-        class_=(
-            "bg-gray-500 hover:bg-gray-400 active:bg-gray-300 "
-            "text-white text-xl font-semibold "
-            "rounded-full aspect-square "
-            "flex items-center justify-center "
-            "transition-all duration-100"
-        ),
-        on_click=handler,
-        on_click_args=[label] if handler == "press_function" else [],
-    )
+    return Button(label, class_=_FN, on_click=handler,
+                  on_click_args=[label] if handler == "press_function" else [])
+
 
 def _op_btn(symbol: str) -> Button:
-    \"\"\"Circular operator button — orange accent.\"\"\"""
-    return Button(
-        symbol,
-        class_=(
-            "bg-orange-500 hover:bg-orange-400 active:bg-orange-300 "
-            "text-white text-2xl font-bold "
-            "rounded-full aspect-square "
-            "flex items-center justify-center "
-            "transition-all duration-100"
-        ),
-        on_click="press_operator",
-        on_click_args=[symbol],
-    )
+    return Button(symbol, class_=_OP, on_click="press_operator", on_click_args=[symbol])
 
 def calculator_view(store) -> Column:
-    root = Column(class_="flex flex-col bg-gray-900 px-3 pb-6 pt-10")
-    # NOTE: no min-h-screen and no flex-1 on display — both push buttons to bottom
+    # Root MUST have min-h-screen to fill viewport (no white gap below buttons)
+    root = Column(class_="flex flex-col min-h-screen bg-gray-900 px-4 pb-8 pt-12")
 
-    # Display — FIXED height, right-aligned, font shrinks as number grows
-    n = len(store.display)
+    # Display — FIXED h-36 (NEVER flex-1 which pushes buttons to bottom)
+    n = len(str(store.display))
     display_size = "text-6xl" if n <= 6 else "text-5xl" if n <= 9 else "text-4xl" if n <= 12 else "text-3xl"
-    display = Container(class_="h-36 flex items-end justify-end px-4 pb-4")
+    display = Container(class_="h-36 flex items-end justify-end px-2 pb-4")
     display.add(Text(store.display, class_=f"{display_size} text-white font-light tracking-tight text-right"))
     root.add(display)
 
-    # IMPORTANT: use Row (flex-row) — P2M does NOT support CSS grid.
-    # flex-1 on each button → equal width; aspect-square → height = width → circle.
-
+    # ROWS: Row MUST have w-full so flex-1 buttons fill the full screen width
     # Row 0 — function row
-    row0 = Row(class_="flex flex-row gap-3 px-1 mb-3")
+    row0 = Row(class_="flex flex-row w-full gap-3 mb-3")
     row0.add(_fn_btn("⌫",  "press_backspace"))
     row0.add(_fn_btn("AC", "press_clear"))
     row0.add(_fn_btn("%",  "press_function"))
@@ -415,30 +393,36 @@ def calculator_view(store) -> Column:
 
     # Rows 1-3 — digit rows
     for row_digits, op in [("789", "×"), ("456", "−"), ("123", "+")]:
-        row = Row(class_="flex flex-row gap-3 px-1 mb-3")
+        row = Row(class_="flex flex-row w-full gap-3 mb-3")
         for d in row_digits:
             row.add(_digit_btn(d))
         row.add(_op_btn(op))
         root.add(row)
 
-    # Row 4 — zero row: flex-[2] makes 0 twice as wide as the others
-    row4 = Row(class_="flex flex-row gap-3 px-1")
+    # Row 4 — zero row: flex-[2] makes "0" twice as wide; "=" MUST use press_equals
+    row4 = Row(class_="flex flex-row w-full gap-3")
     zero = Button(
         "0",
         class_=(
-            "flex-[2] "
+            "flex-[2] py-5 px-7 rounded-full "
             "bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
             "text-white text-2xl font-semibold "
-            "rounded-full py-5 px-8 "
             "flex items-center justify-start "
-            "transition-all duration-100"
+            "transition-colors duration-100"
         ),
         on_click="press_digit",
         on_click_args=["0"],
     )
     row4.add(zero)
-    row4.add(_digit_btn(","))
-    row4.add(_op_btn("="))
+    row4.add(_digit_btn("."))
+    # "=" MUST use press_equals — NEVER press_operator
+    row4.add(Button("=", class_=(
+        "flex-1 py-5 rounded-full "
+        "bg-orange-500 hover:bg-orange-400 active:bg-orange-300 "
+        "text-white text-2xl font-bold "
+        "flex items-center justify-center "
+        "transition-colors duration-100"
+    ), on_click="press_equals"))
     root.add(row4)
 
     return root
@@ -457,7 +441,7 @@ should call these helpers — they should NOT contain raw business logic inline.
 # main.py — calculator reference
 
 def _format(value: float) -> str:
-    \"\"\"Render a float without unnecessary trailing zeros; cap at 12 chars.\"\"\"""
+    \"\"\"Render a float without unnecessary trailing zeros; cap at 12 chars.\"\"\"
     if value == int(value):
         text = str(int(value))
     else:
@@ -466,9 +450,9 @@ def _format(value: float) -> str:
 
 
 def _calculate(a: float, op: str, b: float) -> float:
-    \"\"\"Apply binary operator; raises ValueError on division by zero.\"\"\"""
+    \"\"\"Apply binary operator; raises ValueError on division by zero.\"\"\"
     if op == "+": return a + b
-    if op == "-": return a - b
+    if op == "−": return a - b   # Unicode minus U+2212 — NOT ASCII "-"
     if op == "×": return a * b
     if op == "÷":
         if b == 0:
@@ -482,7 +466,7 @@ def press_digit(digit: str):
         store.display = digit
         store.awaiting_operand = False
     else:
-        store.display = "0" if store.display == "0" else store.display + digit
+        store.display = digit if store.display == "0" else store.display + digit  # replaces "0", NOT keeps it
 
 
 def press_operator(op: str):
@@ -508,25 +492,42 @@ update state.
 
 Use `on_click_args` to avoid registering N separate handlers for N similar actions.
 
+⚠️  CRITICAL: on_click_args values travel through JS → JSON → Python as STRINGS.
+    Handler parameters MUST have type `str`. If you need integer indices, convert
+    inside the handler with `int(arg)`. NEVER type-annotate as `int` directly.
+
 ```python
+# WRONG — type int causes crash: store.grid[row][col] → TypeError (list needs int, got str)
+def handle_cell(row: int, col: int):
+    store.grid[row][col] = store.turn     # ← TypeError: list indices must be str, not int
+
 # WRONG — one handler per button
 def press_1(): store.display += "1"
-def press_2(): store.display += "2"
 events.register("press_1", press_1)
-events.register("press_2", press_2)
 Button("1", on_click="press_1")
 
-# RIGHT — one handler, argument carried by the button
+# RIGHT — args typed as str; convert to int when needed
+def handle_cell(row: str, col: str):
+    r, c = int(row), int(col)            # ← always convert from str
+    if store.grid[r][c] == "":
+        store.grid[r][c] = store.turn
+        store.turn = "O" if store.turn == "X" else "X"
+
+events.register("handle_cell", handle_cell)
+Button("", on_click="handle_cell", on_click_args=[str(row), str(col)])
+
+# RIGHT — digit handler (already str, no conversion needed)
 def press_digit(digit: str):
-    store.display = store.display + digit
+    store.display = digit if store.display == "0" else store.display + digit
 
 events.register("press_digit", press_digit)
 Button("1", on_click="press_digit", on_click_args=["1"])
 Button("2", on_click="press_digit", on_click_args=["2"])
 ```
 
-Apply this to: digit/letter buttons, category selectors, sort options, tab switches,
+Apply to: digit/letter buttons, grid cells, category selectors, sort options, tab switches,
 quantity +/- controls, rating stars, colour pickers.
+Rule: on_click_args must be a list of STRINGS. Convert integers: `[str(row), str(col)]`.
 
 ## 4. Tailwind CSS — mobile-first design system (MASTER LEVEL)
 
@@ -640,13 +641,16 @@ display_size = (
 Text(store.display, class_=f"{display_size} text-white font-light tracking-tight")
 ```
 
-### Grid layouts for button grids
+### ⛔ CSS Grid is NOT supported — use Row (flex-row) only
 ```
-2-col:  class_="grid grid-cols-2 gap-3"
-3-col:  class_="grid grid-cols-3 gap-2"
-4-col:  class_="grid grid-cols-4 gap-3"
-Span 2: class_="col-span-2"   # e.g. zero button, wide action
-Square: class_="aspect-square w-full"   # buttons that must be square
+# WRONG — P2M does NOT support grid; all children stack vertically as block divs
+Container(class_="grid grid-cols-4 gap-3")  # ← DO NOT USE
+
+# CORRECT — use Row for any side-by-side layout
+Row(class_="flex flex-row w-full gap-3 mb-3")   # 4-across button row
+Row(class_="flex flex-row w-full gap-3 mb-3")   # 2-across button row
+# aspect-square is also banned — collapses flex-1 buttons to content height
+# "wide" zero button: flex-[2] (NOT col-span-2)
 ```
 
 ### Spacing rhythm — always use multiples of 4
@@ -752,14 +756,14 @@ IMPORTANT: write_file("main.py", ...) — NOT write_file("<project_name>/main.py
 ## main.py — canonical template
 
 ```python
-\"\"\"<AppName> — Entry point\"\"\"""
+\"\"\"<AppName> — Entry point\"\"\"
 from p2m.core import Render, events
 from state.store import store
 
 
 # ── Utility helpers (pure, no side-effects) ───────────────────────
 def _format(value) -> str:
-    \"\"\"Convert computed value to display string.\"\"\"""
+    \"\"\"Convert computed value to display string.\"\"\"
     ...
 
 
@@ -843,7 +847,7 @@ store = AppState(
 ## Unit tests — p2m.testing
 
 ```python
-\"\"\"Tests for <feature>\"\"\"""
+\"\"\"Tests for <feature>\"\"\"
 import sys
 from pathlib import Path
 import pytest
@@ -887,7 +891,7 @@ def test_handler_changes_state():
 
 
 def test_edge_case_empty_input():
-    \"\"\"Handler must ignore empty / whitespace input.\"\"\"""
+    \"\"\"Handler must ignore empty / whitespace input.\"\"\"
     import main
     from state.store import store
     store.input_text = "   "
@@ -951,6 +955,11 @@ def test_per_item_handler():
 20. Utility/computation helpers that are pure functions MUST be extracted as
     private `_helpers()` in main.py — event handlers call them, they do not
     contain raw arithmetic or string formatting inline.
+21. `on_click_args` values are ALWAYS received as strings by the handler (they
+    travel through JS → JSON → Python). Handler parameters MUST be typed `str`.
+    If integer indices are needed, convert inside the handler: `int(row)`.
+    NEVER: `def handle(row: int, col: int)` with `on_click_args=[row, col]` — crashes.
+    ALWAYS: `def handle(row: str, col: str)` with `on_click_args=[str(row), str(col)]`.
 
 ── TAILWIND DESIGN RULES (treat these as BLOCKING — violating them = rejected output) ──
 
@@ -969,7 +978,8 @@ T4. Every `Text` node must have a complete typography class set:
     Never use bare `Text("label")` with no class.
 
 T5. Border-radius AND button shape must match the app type:
-    - Calculator / numpad / dialer: `rounded-full aspect-square` = perfect CIRCLES
+    - Calculator / numpad / dialer: `flex-1 py-5 rounded-full` = pill buttons filling row width
+      ⛔ NEVER `aspect-square` on flex-1 — collapses to content height → tiny unusable circles
     - Filter chips / tags:          `rounded-full px-3 py-1`     = oval pills
     - Standard action buttons:      `rounded-xl px-5 py-3`       = rounded rectangles
     - Cards and panels:             `rounded-2xl`
@@ -999,19 +1009,30 @@ T10. The root screen Column must ALWAYS have `min-h-screen` so it fills the
      viewport on every device.  Missing `min-h-screen` will be rejected.
 
 T11. CALCULATOR / NUMPAD apps — non-negotiable requirements:
-     - Buttons: `flex-1 h-[76px] rounded-full` inside a `Row (flex-row)` — never grid
-     - Function buttons (AC, %, ⌫): light gray `bg-[#a5a5a5]` with `text-black` — NOT dark gray
-     - Digit buttons: `bg-[#1c1c1e]` dark; Operator buttons: `bg-[#ff9f0a]` orange
-     - Background: `bg-black` (not bg-gray-900)
-     - Display: fixed `h-44`, `font-thin`, right-aligned, with a hint line above it
+     ⛔ ALL values with [brackets] are BANNED (silently fail in CDN Tailwind → white/no-height UI)
+     - Buttons: `flex-1 py-5 rounded-full` inside `Row(class_="flex flex-row w-full gap-3 mb-3")`
+       Row MUST have `w-full` so flex-1 buttons fill the full screen width
+     - Function buttons (AC, %, ⌫): `bg-gray-500 hover:bg-gray-400 active:bg-gray-300 text-white`
+     - Digit buttons: `bg-gray-600 hover:bg-gray-500 active:bg-gray-400 text-white`
+     - Operator buttons: `bg-orange-500 hover:bg-orange-400 active:bg-orange-300 text-white`
+     - Background: `bg-gray-900 min-h-screen` (root Column MUST have min-h-screen)
+     - Display: fixed `h-36`, `font-light`, right-aligned — `Container(class_="h-36 flex items-end justify-end px-2 pb-4")`
      - "=" button: `on_click="press_equals"` — NEVER `on_click="press_operator"`
      - Unicode operator consistency: use "−" "×" "÷" "+" in BOTH buttons AND _calculate
+     - press_digit: `digit if store.display == "0" else store.display + digit`
+       (NOT `"0" if store.display == "0"` — that keeps "0" forever and never replaces it)
 
 T12. Before writing the view file, re-read your UI PLAN comment and verify:
      - The button shape class matches the chosen APP TYPE blueprint exactly
      - The accent colour is applied to primary action buttons only
      - The display/output area uses the correct alignment and dynamic font sizing
      - Every button row uses `Row(class_="flex flex-row gap-3 ...")` not Container+grid
+
+T16. NEVER use `aspect-square` on flex-1 buttons.
+     In P2M's renderer, `aspect-square` on a `flex-1` item collapses the button to its
+     intrinsic content height (height of the text), making tiny unusable circles.
+     CORRECT pattern: `flex-1 py-5 rounded-full` — py-5 gives explicit height,
+     flex-1 gives equal width. This produces well-sized pill buttons that fill the row.
 
 T15. NEVER use arbitrary Tailwind values: bg-[#xxx], h-[Npx], w-[Npx], text-[Npx],
      p-[Npx], gap-[Npx], or any class containing square brackets with custom values.
@@ -1027,8 +1048,9 @@ T15. NEVER use arbitrary Tailwind values: bg-[#xxx], h-[Npx], w-[Npx], text-[Npx
 T14. CALCULATOR DISPLAY: use a FIXED height container (`h-36`) — NEVER `flex-1`.
      `flex-1` on the display expands it to fill all remaining viewport space, which
      pushes the entire button grid to the very bottom of the screen.
-     Pattern: `Container(class_="h-36 flex items-end justify-end px-4 pb-4")`
-     Also remove `min-h-screen` from the root Column for the same reason.
+     Pattern: `Container(class_="h-36 flex items-end justify-end px-2 pb-4")`
+     Root Column MUST keep `min-h-screen` (required by T10) — the fix is on the display
+     container only (use `h-36` fixed height instead of `flex-1`).
 
 T13. NEVER use CSS `grid` or `grid-cols-N` in P2M views.
      The P2M renderer does not support CSS Grid — `Container` renders as a block div
@@ -1108,8 +1130,9 @@ def run_imagine_agent(
         f"  D. Layout structure (display+grid / feed / master-detail / tabs / form)\n"
         f"  E. Accent colour (orange / blue / green / purple / red / teal)\n"
         f"Then look up the matching App Type Blueprint in your instructions and copy\n"
-        f"the exact Tailwind classes from it.  Calculators MUST use `rounded-full\n"
-        f"aspect-square` circular buttons and a right-aligned, adaptive-size display.\n\n"
+        f"the exact Tailwind classes from it.  Calculators MUST use `flex-1 py-5\n"
+        f"rounded-full` pill buttons (NEVER aspect-square) and a right-aligned,\n"
+        f"adaptive-size display in a fixed h-36 container.\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"PHASE 2 — GENERATE ALL FILES\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
