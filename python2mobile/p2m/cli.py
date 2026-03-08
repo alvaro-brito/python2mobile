@@ -114,7 +114,7 @@ def run(port: int, no_frame: bool, skip_validation: bool):
 @click.option("--no-agent", is_flag=True, help="Use legacy LLM generator instead of Agno agent")
 @click.option("--skip-validate-fix", is_flag=True,
               help="Skip Stage 3 Validate & Fix (run toolchain + AI fixer)")
-@click.option("--max-fix-iterations", default=3, show_default=True,
+@click.option("--max-fix-iterations", default=5, show_default=True,
               help="Max number of fix cycles in Stage 3")
 @click.option("--skip-preflight", is_flag=True,
               help="Skip platform prerequisite checks (flutter, swift, node, java)")
@@ -206,7 +206,13 @@ def build(target: str, force: bool, skip_validation: bool, skip_tests: bool, no_
             click.echo(f"✅ Build complete: {output_dir}")
             return
         except Exception as e:
-            click.echo(f"⚠️  Agent build failed ({e}), falling back to legacy generator...", err=True)
+            # Re-raise immediately — never silently fall back to the legacy generator.
+            # The legacy generator produces incomplete output and masks real errors.
+            # Fix the root cause instead.
+            import traceback
+            click.echo(f"❌ Agent build failed: {e}", err=True)
+            click.echo(traceback.format_exc(), err=True)
+            raise SystemExit(1)
 
     # ── Legacy LLM generator ──────────────────────────────────────────────────
     try:
@@ -229,7 +235,7 @@ def build(target: str, force: bool, skip_validation: bool, skip_tests: bool, no_
             click.echo("🌐 Generating Web (HTML/CSS/JS)...")
             generator.generate_web(project_files, str(output_dir))
         elif target == "android":
-            click.echo("🤖 Generating Android (Kotlin)...")
+            click.echo("🤖 Generating Android (Java + XML)...")
             generator.generate_android(project_files, str(output_dir))
         elif target == "ios":
             click.echo("🍎 Generating iOS (Swift)...")

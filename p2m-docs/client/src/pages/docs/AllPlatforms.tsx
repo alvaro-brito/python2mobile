@@ -62,28 +62,34 @@ npx expo run:ios`,
     },
     {
       icon: "🤖",
-      name: "Android (Kotlin)",
+      name: "Android (Java + XML)",
       buildCmd: "p2m build --target android",
       runCmd: `cd build/android
 
-# Build debug APK
+# 1. Set environment (shown in p2m build output)
+export ANDROID_HOME=/path/to/android-sdk
+export PATH=$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH
+
+# 2. Build the APK
 ./gradlew assembleDebug
 
-# Install on running emulator / connected device
-./gradlew installDebug
+# 3. Start compatible emulator (x86_64 on Intel / arm64 on Apple Silicon)
+emulator -avd <your_avd_name> &
 
-# APK path:
-# app/build/outputs/apk/debug/app-debug.apk`,
+# 4. Install and launch the app
+adb wait-for-device
+adb install app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.example.app/.MainActivity`,
       runNote: isPortuguese
-        ? "Para installDebug, inicie um emulador Android Studio ou conecte um dispositivo com depuração USB ativa."
-        : "For installDebug, start an Android Studio emulator or connect a device with USB debugging enabled.",
+        ? "O p2m build detecta automaticamente ANDROID_HOME, AVDs disponíveis e arquitetura correta (x86_64/arm64), imprimindo instruções precisas para seu ambiente."
+        : "p2m build auto-detects ANDROID_HOME, available AVDs, and correct CPU architecture (x86_64/arm64), printing environment-specific instructions.",
       desc: isPortuguese
-        ? "Código Android nativo com Kotlin e Jetpack Compose. Gera ViewModel, StateFlow e Composables."
-        : "Native Android with Kotlin and Jetpack Compose. Generates ViewModel, StateFlow, and Composables.",
-      toolchain: "Java JDK 17+",
-      install_mac: "brew install openjdk@17",
+        ? "Android nativo com Java e layouts XML. Gera AppViewModel (LiveData), MainActivity (ViewBinding) e layouts LinearLayout/ConstraintLayout. 100% compatível com Android Studio."
+        : "Native Android with Java and XML layouts. Generates AppViewModel (LiveData), MainActivity (ViewBinding) and LinearLayout/ConstraintLayout layouts. 100% Android Studio compatible.",
+      toolchain: isPortuguese ? "Java JDK 17+ (Temurin recomendado — não GraalVM)" : "Java JDK 17+ (Temurin recommended — not GraalVM)",
+      install_mac: "brew install --cask temurin@17",
       install_linux: "sudo apt install openjdk-17-jdk",
-      install_win: "winget install Microsoft.OpenJDK.17",
+      install_win: "winget install EclipseAdoptium.Temurin.17.JDK",
       color: "from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20",
       border: "border-green-200 dark:border-green-800",
     },
@@ -211,6 +217,91 @@ open Package.swift`,
         ))}
       </div>
 
+      {/* Android architecture detail */}
+      <Card className="p-6 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-green-200 dark:border-green-800">
+        <h2 className="text-xl font-bold text-green-900 dark:text-green-300 mb-3">
+          🤖 {isPortuguese ? "Android — Arquitetura Java + XML" : "Android — Java + XML Architecture"}
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          {isPortuguese
+            ? "O agente Android gera um projeto nativo completo com padrão MVVM usando Java puro e layouts XML — sem Kotlin, sem Jetpack Compose."
+            : "The Android agent generates a complete native project with MVVM pattern using pure Java and XML layouts — no Kotlin, no Jetpack Compose."}
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              {isPortuguese ? "Arquivos gerados" : "Generated files"}
+            </p>
+            <CodeBlock language="bash" code={`app/src/main/java/com/example/app/
+├── MainActivity.java       # ViewBinding + ViewModel
+├── viewmodel/
+│   └── AppViewModel.java   # MutableLiveData per state field
+└── ui/
+    └── state/UiState.java  # POJO state class
+
+app/src/main/res/
+├── layout/activity_main.xml   # LinearLayout + ViewBinding
+├── values/
+│   ├── colors.xml             # Color definitions
+│   ├── strings.xml            # String resources
+│   └── themes.xml             # Material styles`} />
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              {isPortuguese ? "Padrão de estado" : "State pattern"}
+            </p>
+            <CodeBlock language="java" code={`// AppViewModel.java
+public class AppViewModel extends ViewModel {
+    private final MutableLiveData<String> display
+        = new MutableLiveData<>("0");
+
+    public LiveData<String> getDisplay() {
+        return display;
+    }
+
+    public void pressDigit(String digit) {
+        // event handler logic
+    }
+}
+
+// MainActivity.java
+viewModel.getDisplay().observe(this,
+    val -> binding.textDisplay.setText(val));`} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          {[
+            {
+              title: isPortuguese ? "Build scripts (.kts)" : "Build scripts (.kts)",
+              desc: isPortuguese
+                ? "Os arquivos build.gradle.kts são scripts Gradle em Kotlin DSL — apenas configuração de build, não código da app."
+                : "build.gradle.kts files are Gradle scripts in Kotlin DSL — build configuration only, not app code.",
+              icon: "📋",
+            },
+            {
+              title: isPortuguese ? "Detecção de JDK" : "JDK Detection",
+              desc: isPortuguese
+                ? "P2M descobre automaticamente todos os JDKs instalados (macOS, Linux, SDKMAN) e escolhe o melhor compatível."
+                : "P2M automatically discovers all installed JDKs (macOS, Linux, SDKMAN) and picks the best compatible one.",
+              icon: "☕",
+            },
+            {
+              title: isPortuguese ? "Validate & Fix" : "Validate & Fix",
+              desc: isPortuguese
+                ? "Compila com Gradle --info, extrai erros javac precisos e usa IA para corrigir arquivo por arquivo."
+                : "Compiles with Gradle --info, extracts precise javac errors and uses AI to fix file by file.",
+              icon: "🔧",
+            },
+          ].map((item) => (
+            <div key={item.title} className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-green-100 dark:border-green-900">
+              <div className="text-lg mb-1">{item.icon}</div>
+              <div className="font-semibold text-foreground mb-1">{item.title}</div>
+              <p className="text-muted-foreground">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* Preflight checks */}
       <div>
         <h2 className="text-2xl font-bold text-foreground mb-4">
@@ -272,10 +363,10 @@ open Package.swift`,
             </thead>
             <tbody>
               {[
-                ["🐦 Flutter",        "Dart",       "Material / Cupertino",  "ChangeNotifier",        "flutter run"],
-                ["⚛️ React Native",   "TypeScript", "React Native + Expo",   "Context + useReducer",  "npx expo start"],
-                ["🤖 Android",        "Kotlin",     "Jetpack Compose",       "ViewModel + StateFlow", "./gradlew installDebug"],
-                ["🍎 iOS",            "Swift",      "SwiftUI",               "ObservableObject",      "xed ."],
+                ["🐦 Flutter",        "Dart",       "Material / Cupertino",  "ChangeNotifier",         "flutter run"],
+                ["⚛️ React Native",   "TypeScript", "React Native + Expo",   "Context + useReducer",   "npx expo start"],
+                ["🤖 Android",        "Java",       "XML (ViewBinding)",      "ViewModel + LiveData",   "adb shell am start"],
+                ["🍎 iOS",            "Swift",      "SwiftUI",               "ObservableObject",       "xcrun simctl launch"],
               ].map(([plat, lang, ui, state, run], i) => (
                 <tr key={i} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <td className="p-3 border border-slate-200 dark:border-slate-700 font-medium">{plat}</td>

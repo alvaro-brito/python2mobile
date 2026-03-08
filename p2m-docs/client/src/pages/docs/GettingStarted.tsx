@@ -119,7 +119,7 @@ p2m build --target flutter
 # iOS (SwiftUI)
 p2m build --target ios
 
-# Android (Kotlin + Compose)
+# Android (Java + XML layouts)
 p2m build --target android
 
 # React Native (Expo)

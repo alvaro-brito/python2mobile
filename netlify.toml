@@ -1,0 +1,12 @@
+[build]
+  base = "p2m-docs"
+  publish = "dist"
+  command = "pnpm run build"
+
+[context.production]
+  environment = { NODE_ENV = "production" }
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
