@@ -154,12 +154,12 @@ p2m publish wizard`}</pre>
             ? "🔔 Acompanhe o desenvolvimento em "
             : "🔔 Follow the development at "}
           <a
-            href="https://github.com/anthropics/python2mobile"
+            href="https://github.com/alvaro-brito/python2mobile"
             className="text-blue-600 hover:underline font-medium"
             target="_blank"
             rel="noopener noreferrer"
           >
-            github.com/anthropics/python2mobile
+            github.com/alvaro-brito/python2mobile
           </a>
         </p>
       </Card>

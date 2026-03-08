@@ -121,7 +121,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           {/* Sidebar Footer */}
           <div className="p-4 border-t border-border space-y-3">
             <a
-              href="https://github.com"
+              href="https://github.com/alvaro-brito/python2mobile"
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-muted-foreground hover:text-foreground block"
@@ -148,7 +148,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
                 <a className="text-sm text-muted-foreground hover:text-foreground">{t("nav.home")}</a>
               </Link>
               <a
-                href="https://github.com"
+                href="https://github.com/alvaro-brito/python2mobile"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-muted-foreground hover:text-foreground"

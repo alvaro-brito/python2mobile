@@ -19,7 +19,7 @@ export default function Home() {
               <a className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</a>
             </Link>
             <a
-              href="https://github.com"
+              href="https://github.com/alvaro-brito/python2mobile"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -52,7 +52,7 @@ export default function Home() {
                   </Button>
                 </a>
               </Link>
-              <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/alvaro-brito/python2mobile" target="_blank" rel="noopener noreferrer">
                 <Button size="lg" variant="outline" className="w-full sm:w-auto">
                   View on GitHub
                 </Button>
