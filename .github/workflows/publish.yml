@@ -1,0 +1,60 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "*RELEASE*"   # triggers on any tag containing "RELEASE", e.g. v0.1.0-RELEASE, RELEASE-1.2.0
+
+jobs:
+  publish:
+    name: Build and publish Python package
+    runs-on: ubuntu-latest
+    environment: pypi          # optional: add a GitHub Environment for extra protection
+
+    permissions:
+      id-token: write          # required for Trusted Publishing (OIDC) — no API token needed
+      contents: read
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Strip common prefixes/suffixes, keep the semver part
+          RAW="${GITHUB_REF_NAME}"                  # e.g. v0.2.0-RELEASE or RELEASE-0.2.0
+          VERSION=$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Update version in pyproject.toml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -n "$VERSION" ]; then
+            sed -i "s/^version = \".*\"/version = \"$VERSION\"/" python2mobile/pyproject.toml
+            echo "Set version to $VERSION"
+          else
+            echo "No semver found in tag — using version already in pyproject.toml"
+          fi
+
+      - name: Build distribution packages
+        run: |
+          cd python2mobile
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python2mobile/dist/
+          # Uses OIDC Trusted Publishing — no PYPI_API_TOKEN secret needed.
+          # If you prefer an API token, remove the id-token permission above and uncomment:
+          # password: ${{ secrets.PYPI_API_TOKEN }}
