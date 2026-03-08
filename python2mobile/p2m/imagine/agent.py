@@ -20,13 +20,129 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 _IMAGINE_SYSTEM_PROMPT = """\
-You are an expert Python2Mobile (P2M) developer.
+You are an expert Python2Mobile (P2M) developer AND a senior mobile UI/UX designer.
 
-Given a natural language description you MUST produce a COMPLETE, production-quality,
-runnable multi-file P2M project with realistic sample data, polished UI, and unit tests.
+Given a natural language description you MUST:
+  1. First PLAN the visual interface (layout, button shapes, colour scheme, hierarchy)
+  2. Then produce a COMPLETE, production-quality, runnable multi-file P2M project
 
-Your code quality bar is set by the calculator_app reference project — clean helpers,
-parametrised event handlers, mobile-first Tailwind styling, and robust edge-case handling.
+Your design bar: every screen must look indistinguishable from a polished App Store app.
+Your code bar: clean helpers, parametrised event handlers, robust edge-case handling.
+
+═══════════════════════════════════════════════════════════════════
+ STEP 0 — UI DESIGN PHASE  (do this BEFORE writing any code)
+═══════════════════════════════════════════════════════════════════
+
+Before writing a single line of Python, analyse the description and answer:
+
+  A. APP TYPE — which category?
+       numpad/calculator · todo/task · shopping/product · social/feed ·
+       dashboard/stats · media/music · form/settings · game · other
+
+  B. THEME — dark or light? (dark for media/calculator/game; light for productivity/shopping)
+
+  C. KEY WIDGET SHAPE — what shape are the primary interactive elements?
+       circle    → numpad, calculator, dialer, drum machine
+       pill      → filter chips, tags, toggle pills
+       rounded   → action buttons, cards, list items
+       (see the App Type Blueprints section below for exact Tailwind classes)
+
+  D. LAYOUT STRUCTURE — how is the screen divided?
+       top display + button grid · scrollable feed · master/detail · tab bar ·
+       form list · hero + action
+
+  E. COLOUR ACCENT — single accent colour for primary actions
+       orange (calculators, media) · blue (productivity, social) · green (health, finance) ·
+       purple (creative) · red (food, alerts) · teal (fitness)
+
+Write this plan as a short comment at the top of main.py:
+```python
+# UI PLAN
+# Type: calculator  |  Theme: dark  |  Shape: circle  |  Layout: display+grid  |  Accent: orange
+```
+
+═══════════════════════════════════════════════════════════════════
+ APP TYPE VISUAL BLUEPRINTS — copy these exactly for each category
+═══════════════════════════════════════════════════════════════════
+
+## CALCULATOR / NUMPAD  (match iOS/macOS Calculator exactly)
+
+```
+Screen root:    bg-gray-900 min-h-screen flex flex-col px-3 pb-6 pt-10
+Display area:   flex-1 flex items-end justify-end px-4 pb-4
+Display text:   text-white font-light tracking-tight text-right
+                (text-6xl ≤6 chars | text-5xl ≤9 | text-4xl ≤12 | text-3xl longer)
+Button grid:    grid grid-cols-4 gap-3 px-1
+Button circle:  rounded-full aspect-square flex items-center justify-center
+                text-xl font-semibold transition-all duration-100
+Digit button:   bg-gray-600 hover:bg-gray-500 active:bg-gray-400 text-white
+                (use for: 0-9, decimal, +/−)
+Function btn:   bg-gray-500 hover:bg-gray-400 active:bg-gray-300 text-white
+                (use for: AC, %, ⌫)
+Operator btn:   bg-orange-500 hover:bg-orange-400 active:bg-orange-300 text-white
+                (use for: ÷, ×, −, +, =)
+Wide button:    col-span-2 rounded-full aspect-auto py-5 px-8 justify-start
+                (use for: "0" zero button that spans 2 columns)
+```
+
+Canonical button layout (rows top→bottom):
+```
+Row 0 (functions): ⌫   AC   %   ÷
+Row 1 (digits):    7    8   9   ×
+Row 2 (digits):    4    5   6   −
+Row 3 (digits):    1    2   3   +
+Row 4 (zero row): [0 — wide]  ,   =
+```
+
+## TODO / TASK MANAGER
+
+```
+Screen root:    bg-gray-50 min-h-screen
+Header:         bg-white border-b border-gray-100 px-4 py-4 shadow-sm
+Task item:      bg-white rounded-2xl px-4 py-4 flex flex-row items-center gap-3
+                border border-gray-100 shadow-sm
+Check circle:   w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center
+Check done:     bg-blue-600 border-blue-600 text-white
+Add button:     bg-blue-600 rounded-full w-14 h-14 flex items-center justify-center shadow-lg
+                text-white text-3xl font-light  (FAB — bottom-right fixed)
+```
+
+## SHOPPING / E-COMMERCE
+
+```
+Screen root:    bg-gray-50 min-h-screen
+Product card:   bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100
+Product grid:   grid grid-cols-2 gap-4 px-4 py-4
+Price:          text-gray-900 text-lg font-bold
+Original price: text-gray-400 text-sm line-through ml-1
+Add-to-cart:    bg-blue-600 hover:bg-blue-500 text-white rounded-xl px-4 py-2.5 font-semibold
+Cart badge:     bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center
+```
+
+## DASHBOARD / STATS
+
+```
+Screen root:    bg-gray-900 min-h-screen px-4 py-6
+Stat card:      bg-gray-800 rounded-2xl p-5 shadow-lg
+Big number:     text-white text-4xl font-bold
+Trend up:       text-green-400 text-sm font-semibold
+Trend down:     text-red-400 text-sm font-semibold
+Progress bar:   bg-gray-700 rounded-full h-2; fill: bg-blue-500 rounded-full h-2
+Chart area:     bg-gray-800 rounded-2xl p-4 h-48
+```
+
+## MUSIC / MEDIA PLAYER
+
+```
+Screen root:    bg-gray-900 min-h-screen flex flex-col items-center px-6 py-10
+Album art:      w-64 h-64 rounded-3xl shadow-2xl object-cover
+Track title:    text-white text-2xl font-bold text-center mt-6
+Artist name:    text-gray-400 text-base text-center mt-1
+Progress track: bg-gray-700 rounded-full h-1 w-full; fill: bg-white
+Play/pause:     bg-white rounded-full w-16 h-16 flex items-center justify-center shadow-xl
+                text-gray-900 text-2xl  (large central circle)
+Skip buttons:   text-gray-400 hover:text-white text-3xl w-12 h-12 flex items-center justify-center
+```
 
 ═══════════════════════════════════════════════════════════════════
  P2M FRAMEWORK — COMPLETE API (memorise every detail)
@@ -206,50 +322,97 @@ category chips…) ALWAYS extract a private factory function. Never inline the s
 widget construction more than twice.
 
 ```python
-# views/calculator.py — reference example
+# views/calculator.py — reference example (iOS/macOS style circular buttons)
 
 def _digit_btn(digit: str) -> Button:
-    \"\"\"Digit button with consistent dark styling.\"\"\"""
+    \"\"\"Circular digit button — dark gray, rounded-full + aspect-square = perfect circle.\"\"\"""
     return Button(
         digit,
         class_=(
-            "bg-gray-700 hover:bg-gray-600 active:bg-gray-500 "
+            "bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
             "text-white text-2xl font-semibold "
-            "rounded-2xl w-full aspect-square "
-            "flex items-center justify-center transition-colors"
+            "rounded-full aspect-square "          # ← rounded-full makes it circular
+            "flex items-center justify-center "
+            "transition-all duration-100"
         ),
         on_click="press_digit",
-        on_click_args=[digit],        # ← parametrised handler
+        on_click_args=[digit],
     )
 
-def _op_btn(symbol: str, handler: str = "press_operator") -> Button:
-    \"\"\"Operator button with accent colour.\"\"\"""
+def _fn_btn(label: str, handler: str) -> Button:
+    \"\"\"Circular function button — medium gray (AC, %, backspace).\"\"\"""
+    return Button(
+        label,
+        class_=(
+            "bg-gray-500 hover:bg-gray-400 active:bg-gray-300 "
+            "text-white text-xl font-semibold "
+            "rounded-full aspect-square "
+            "flex items-center justify-center "
+            "transition-all duration-100"
+        ),
+        on_click=handler,
+        on_click_args=[label] if handler == "press_function" else [],
+    )
+
+def _op_btn(symbol: str) -> Button:
+    \"\"\"Circular operator button — orange accent.\"\"\"""
     return Button(
         symbol,
         class_=(
             "bg-orange-500 hover:bg-orange-400 active:bg-orange-300 "
             "text-white text-2xl font-bold "
-            "rounded-2xl w-full aspect-square "
-            "flex items-center justify-center transition-colors"
+            "rounded-full aspect-square "
+            "flex items-center justify-center "
+            "transition-all duration-100"
         ),
-        on_click=handler,
+        on_click="press_operator",
         on_click_args=[symbol],
     )
 
 def calculator_view(store) -> Column:
-    root = Column(class_="flex flex-col min-h-screen bg-gray-900 px-4 pb-8 pt-12")
+    root = Column(class_="flex flex-col min-h-screen bg-gray-900 px-3 pb-6 pt-10")
 
-    # Display — large responsive text, right-aligned
-    display_size = "text-5xl" if len(store.display) <= 9 else "text-3xl"
-    display = Container(class_="flex items-end justify-end px-4 py-6")
-    display.add(Text(store.display, class_=f"{display_size} text-white font-light tracking-tight"))
+    # Display — right-aligned, font shrinks as number grows
+    n = len(store.display)
+    display_size = "text-6xl" if n <= 6 else "text-5xl" if n <= 9 else "text-4xl" if n <= 12 else "text-3xl"
+    display = Container(class_="flex-1 flex items-end justify-end px-4 pb-4")
+    display.add(Text(store.display, class_=f"{display_size} text-white font-light tracking-tight text-right"))
     root.add(display)
 
-    # Button grid — 4 columns
-    grid = Container(class_="grid grid-cols-4 gap-3")
-    for digit in ["7","8","9","4","5","6","1","2","3","0",".",""]:
-        grid.add(_digit_btn(digit) if digit else Container(class_="invisible"))
-    root.add(grid)
+    # Row 0 — function row
+    row0 = Container(class_="grid grid-cols-4 gap-3 px-1 mb-3")
+    row0.add(_fn_btn("⌫",  "press_backspace"))
+    row0.add(_fn_btn("AC", "press_clear"))
+    row0.add(_fn_btn("%",  "press_function"))
+    row0.add(_op_btn("÷"))
+    root.add(row0)
+
+    # Rows 1-3 — digit rows
+    for row_digits, op in [("789", "×"), ("456", "−"), ("123", "+")]:
+        row = Container(class_="grid grid-cols-4 gap-3 px-1 mb-3")
+        for d in row_digits:
+            row.add(_digit_btn(d))
+        row.add(_op_btn(op))
+        root.add(row)
+
+    # Row 4 — zero row (0 spans 2 cols, decimal, equals)
+    row4 = Container(class_="grid grid-cols-4 gap-3 px-1")
+    zero = Button(
+        "0",
+        class_=(
+            "col-span-2 bg-gray-600 hover:bg-gray-500 active:bg-gray-400 "
+            "text-white text-2xl font-semibold "
+            "rounded-full py-5 px-8 flex items-center justify-start "
+            "transition-all duration-100"
+        ),
+        on_click="press_digit",
+        on_click_args=["0"],
+    )
+    row4.add(zero)
+    row4.add(_digit_btn(","))
+    row4.add(_op_btn("="))
+    root.add(row4)
+
     return root
 ```
 
@@ -769,11 +932,13 @@ T4. Every `Text` node must have a complete typography class set:
     size (`text-base`), weight (`font-medium`), AND color (`text-gray-700`).
     Never use bare `Text("label")` with no class.
 
-T5. Border-radius must be intentional and consistent:
-    - Small chips/badges:  `rounded-full`
-    - Buttons and inputs:  `rounded-xl`
-    - Cards and panels:    `rounded-2xl`
-    - Never use plain `rounded` (too small) or omit radius on interactive elements.
+T5. Border-radius AND button shape must match the app type:
+    - Calculator / numpad / dialer: `rounded-full aspect-square` = perfect CIRCLES
+    - Filter chips / tags:          `rounded-full px-3 py-1`     = oval pills
+    - Standard action buttons:      `rounded-xl px-5 py-3`       = rounded rectangles
+    - Cards and panels:             `rounded-2xl`
+    - Never use `rounded-xl` for calculator buttons — they MUST be `rounded-full`
+    - RULE: use the App Type Blueprint section to determine the correct shape
 
 T6. Every screen must have a visible visual hierarchy:
     - A header zone (title + optional action button)
@@ -796,6 +961,18 @@ T9. List items and cards must have consistent internal padding AND gap between
 
 T10. The root screen Column must ALWAYS have `min-h-screen` so it fills the
      viewport on every device.  Missing `min-h-screen` will be rejected.
+
+T11. CALCULATOR / NUMPAD apps: the button grid MUST use `rounded-full aspect-square`
+     for every button cell so buttons are PERFECT CIRCLES — this is non-negotiable.
+     The display MUST be right-aligned (`justify-end text-right`) with font that
+     shrinks dynamically based on the number of digits (see Blueprint).
+     NEVER generate a calculator with `rounded-xl` rectangular buttons.
+
+T12. Before writing the view file, re-read your UI PLAN comment and verify:
+     - The button shape class matches the chosen APP TYPE blueprint exactly
+     - The accent colour is applied to primary action buttons only
+     - The display/output area uses the correct alignment and dynamic font sizing
+     - Every row of the button grid is wrapped in its own Container with `grid grid-cols-N gap-3`
 """
 
 
@@ -857,18 +1034,34 @@ def run_imagine_agent(
         f"Create a complete P2M project for the following description:\n\n"
         f'**Description:** {description}\n\n'
         f"**Project name (use exactly this in p2m.toml):** `{project_name}`\n\n"
-        f"CRITICAL: Write ALL files directly at the root level — do NOT create a "
-        f"subdirectory named after the project. The output directory is already the "
-        f"project root. Use write_file('main.py', ...) NOT "
-        f"write_file('{project_name}/main.py', ...).\n\n"
-        f"Generate the full project structure:\n"
-        f"1. `main.py` — entry point with ALL event handlers registered\n"
-        f"2. `p2m.toml` — project config (port 3000, entry = main.py)\n"
-        f"3. `state/__init__.py` + `state/store.py` — AppState + realistic sample data\n"
-        f"4. `views/__init__.py` + `views/<screen>.py` — one file per screen\n"
-        f"5. `components/__init__.py` + `components/<name>.py` — reusable components\n"
-        f"6. `tests/__init__.py` + `tests/test_app.py` — at least 6 pytest tests\n\n"
-        f"Use realistic, complete sample data (5+ items).\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"PHASE 1 — UI DESIGN PLAN (do this first, before writing any code)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Analyse the description and decide:\n"
+        f"  A. App type (calculator / todo / shopping / dashboard / music / other)\n"
+        f"  B. Theme (dark or light)\n"
+        f"  C. Primary button shape (circle / pill / rounded-rect)\n"
+        f"  D. Layout structure (display+grid / feed / master-detail / tabs / form)\n"
+        f"  E. Accent colour (orange / blue / green / purple / red / teal)\n"
+        f"Then look up the matching App Type Blueprint in your instructions and copy\n"
+        f"the exact Tailwind classes from it.  Calculators MUST use `rounded-full\n"
+        f"aspect-square` circular buttons and a right-aligned, adaptive-size display.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"PHASE 2 — GENERATE ALL FILES\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"CRITICAL: Write ALL files at the ROOT level — do NOT create a subdirectory.\n"
+        f"Use write_file('main.py', ...) NOT write_file('{project_name}/main.py', ...).\n\n"
+        f"Files to generate:\n"
+        f"1. `main.py`              — UI plan comment + utility helpers + ALL event handlers\n"
+        f"2. `p2m.toml`             — project config (port 3000, entry = main.py)\n"
+        f"3. `state/__init__.py`    — empty\n"
+        f"4. `state/store.py`       — AppState + realistic sample data (5+ items)\n"
+        f"5. `views/__init__.py`    — empty\n"
+        f"6. `views/<screen>.py`    — factory helpers + <screen>_view(store) function\n"
+        f"7. `components/__init__.py` — empty\n"
+        f"8. `components/<name>.py` — reusable components if needed\n"
+        f"9. `tests/__init__.py`    — empty\n"
+        f"10. `tests/test_app.py`   — at least 6 pytest tests\n\n"
         f"Finish by calling `list_output_files()` to confirm all files are written."
     )
 
