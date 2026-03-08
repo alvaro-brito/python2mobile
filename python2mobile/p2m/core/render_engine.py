@@ -26,7 +26,27 @@ _WS_SCRIPT = """
         var msg = JSON.parse(e.data);
         if (msg.type === 'render') {
           var el = document.getElementById('p2m-content');
-          if (el) el.innerHTML = msg.html;
+          if (!el) return;
+
+          /* ── Preserve focus & cursor across re-renders ── */
+          var active   = document.activeElement;
+          var focusId  = active && active.id   ? active.id   : null;
+          var focusName= active && active.name ? active.name : null;
+          var selStart = active && active.selectionStart != null ? active.selectionStart : null;
+          var selEnd   = active && active.selectionEnd   != null ? active.selectionEnd   : null;
+
+          el.innerHTML = msg.html;
+
+          /* Restore focus to the same input (by id, then by name) */
+          var restored = null;
+          if (focusId)   restored = el.querySelector('#' + CSS.escape(focusId));
+          if (!restored && focusName) restored = el.querySelector('[name="' + focusName + '"]');
+          if (restored) {
+            restored.focus();
+            if (selStart != null) {
+              try { restored.setSelectionRange(selEnd, selEnd); } catch (_) {}
+            }
+          }
         } else if (msg.type === 'error') {
           console.error('[P2M]', msg.message);
         }
@@ -52,11 +72,15 @@ _WS_SCRIPT = """
     }
   };
 
-  /* handleChange(action, value) — for inputs */
+  /* handleChange(action, value) — debounced to avoid re-render on every keystroke */
+  var _changeTimers = {};
   window.handleChange = function (action, value) {
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'change', action: action, value: value }));
-    }
+    clearTimeout(_changeTimers[action]);
+    _changeTimers[action] = setTimeout(function () {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'change', action: action, value: value }));
+      }
+    }, 150);  /* 150 ms debounce — fast enough to feel instant */
   };
 })();
 """
@@ -609,6 +633,8 @@ class RenderEngine:
             on_change = props.get("on_change")
             if on_change:
                 name = on_change.__name__ if callable(on_change) else str(on_change)
+                # Stable id lets the WS re-render restore focus to the same input
+                parts.append(f'id="p2m-input-{name}" name="p2m-input-{name}"')
                 parts.append(f"oninput=\"handleChange('{name}', this.value)\"")
 
         elif ctype == "Image":

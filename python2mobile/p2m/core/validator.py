@@ -117,8 +117,11 @@ class CodeValidator:
             if "__pycache__" in str(py_file) or py_file.name.startswith("test_"):
                 continue
 
-            # Check if this is the entry point file
-            is_entry = (py_file == entry_path or py_file.name == entry_path.name)
+            # Check if this is the entry point file.
+            # Compare resolved absolute paths so views/main.py is never confused
+            # with the root-level main.py.
+            resolved_entry = (project_path / entry_file).resolve()
+            is_entry = (py_file.resolve() == resolved_entry)
 
             if is_entry:
                 # Full validation for entry point

@@ -111,13 +111,70 @@ class DesignFixer:
 
     # ── public API ───────────────────────────────────────────────────────────
 
+    def _fix_password_input_type(self, s: str) -> str:
+        """
+        Add input_type="password" to Input() calls whose placeholder/value/on_change
+        suggest a password field but are missing the attribute.
+        Matches: placeholder="Password"|"Senha"|"PIN"|"Secret" etc.
+        """
+        # Match the FULL Input() call so we can check all arguments, not just up to placeholder
+        _PASSWORD_HINTS = re.compile(
+            r'Input\s*\([^)]*placeholder\s*=\s*["\'](?:password|senha|pin|secret|passcode|contraseña)["\'][^)]*\)',
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        def add_input_type(m: re.Match) -> str:
+            snippet = m.group(0)
+            if 'input_type' in snippet:
+                return snippet  # already set — do not add duplicate
+            # Insert input_type="password" before the closing )
+            self.changes.append('Added input_type="password" to password Input field')
+            # Strip trailing ) and re-add with the new kwarg
+            return snippet[:-1].rstrip() + ',\n        input_type="password"\n    )'
+
+        return _PASSWORD_HINTS.sub(add_input_type, s)
+
+    def _fix_unterminated_strings(self, s: str) -> str:
+        """
+        Fix unterminated string literals caused by the LLM inserting a newline
+        inside a string argument (common with long class_ values).
+
+        Strategy: if ast.parse fails with 'unterminated string literal' at line N,
+        join line N with line N+1 (strip the newline + leading whitespace between
+        them).  Repeat until the error goes away or a different error type appears.
+        """
+        import ast
+
+        max_passes = 20  # safety cap
+        for _ in range(max_passes):
+            try:
+                ast.parse(s)
+                return s  # clean
+            except SyntaxError as e:
+                msg = (e.msg or "").lower()
+                if not any(k in msg for k in ("unterminated string", "eol while scanning", "eof while scanning")):
+                    return s  # different error — leave for LLM fixer
+                lineno = (e.lineno or 1) - 1  # 0-based
+                lines = s.splitlines(keepends=True)
+                if lineno >= len(lines) - 1:
+                    return s  # can't join past end of file
+                # Join the broken line with the continuation line
+                merged = lines[lineno].rstrip("\n\r") + " " + lines[lineno + 1].lstrip()
+                lines = lines[:lineno] + [merged] + lines[lineno + 2:]
+                s = "".join(lines)
+                self.changes.append(f"Unterminated string literal at line {lineno + 1} fixed (continuation joined)")
+        return s
+
     def fix(self) -> str:
         s = self.source
-        s = self._fix_broken_docstrings(s)  # must run first — syntax errors block other analysis
+        s = self._fix_broken_docstrings(s)    # must run first — syntax errors block other analysis
+        s = self._fix_unterminated_strings(s) # join LLM-split string literals before other passes
+        s = self._fix_password_input_type(s)
         s = self._fix_arbitrary_bg(s)
         s = self._fix_arbitrary_h(s)
         s = self._fix_arbitrary_w(s)
         s = self._fix_arbitrary_text(s)
+        s = self._fix_flex_without_direction(s)
         s = self._fix_aspect_square(s)
         s = self._fix_row_missing_w_full(s)
         s = self._fix_press_digit_zero_bug(s)
@@ -264,6 +321,34 @@ class DesignFixer:
             return m.group(1)
         return re.sub(pattern, replace, s)
 
+    def _fix_flex_without_direction(self, s: str) -> str:
+        """
+        Fix Container/Card/ScrollView that has 'flex' but neither 'flex-col' nor 'flex-row'.
+        In Tailwind, bare 'flex' defaults to flex-direction: row, making children appear
+        side by side instead of stacked — a very common LLM mistake on form containers.
+
+        Adds 'flex-col' when the class contains 'flex' but no direction token.
+        Only touches Container/Card classes, not Column/Row (they already have direction).
+        """
+        # Match Container/Card/ScrollView class strings
+        def fix_flex(m: re.Match) -> str:
+            tag = m.group(1)
+            quote = m.group(2)
+            cls = m.group(3)
+            # Must have 'flex' but NOT 'flex-col', 'flex-row', 'flex-wrap', 'flex-1', 'flex-[', 'flex-none'
+            if re.search(r'\bflex\b', cls) and not re.search(r'\bflex-(?:col|row|wrap|1|none|\[)', cls):
+                new_cls = re.sub(r'\bflex\b', 'flex flex-col', cls)
+                self.changes.append(
+                    f'{tag}: bare "flex" → "flex flex-col" (was defaulting to flex-row)'
+                )
+                return f'{tag}(class_={quote}{new_cls}{quote}'
+            return m.group(0)
+
+        return re.sub(
+            r'(Container|Card|ScrollView)\(class_=(["\'])([^"\']*flex[^"\']*)\2',
+            fix_flex, s
+        )
+
     def _fix_equals_press_operator(self, s: str) -> str:
         """
         Detect '=' button being routed to press_operator and redirect to press_equals.
@@ -313,6 +398,117 @@ def fix_file(path: Path, verbose: bool = True) -> list[str]:
     return fixer.changes
 
 
+def _fix_missing_utils_imports(output_dir: Path, verbose: bool = True) -> dict[str, list[str]]:
+    """
+    Scan view/component files for calls to private helpers (_name) that are defined
+    in utils.py but not imported.  Auto-injects 'from utils import ...' as needed.
+
+    Returns {relative_filename: [change descriptions]} for every file patched.
+    """
+    import ast as _ast
+
+    utils_path = output_dir / "utils.py"
+    if not utils_path.exists():
+        return {}
+
+    # Collect all helpers defined in utils.py
+    try:
+        utils_tree = _ast.parse(utils_path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+
+    utils_helpers: set[str] = {
+        node.name
+        for node in _ast.walk(utils_tree)
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+        and node.name.startswith("_")
+    }
+    if not utils_helpers:
+        return {}
+
+    results: dict[str, list[str]] = {}
+
+    # Scan view and component files (skip main.py, utils.py, state/, tests/)
+    for path in sorted(output_dir.rglob("*.py")):
+        if path.name in ("__init__.py", "utils.py"):
+            continue
+        # Skip the top-level entry point (main.py at project root), but NOT views/main.py
+        if path.name == "main.py" and path.parent == output_dir:
+            continue
+        if "test_" in path.name or path.name.startswith("test"):
+            continue
+        if path.parent.name in ("state", "tests", "__pycache__"):
+            continue
+
+        source = path.read_text(encoding="utf-8")
+        try:
+            tree = _ast.parse(source)
+        except SyntaxError:
+            continue
+
+        # Names already imported or defined in this file
+        local_names: set[str] = set()
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                local_names.add(node.name)
+            elif isinstance(node, _ast.Import):
+                for alias in node.names:
+                    local_names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, _ast.ImportFrom):
+                for alias in node.names:
+                    local_names.add(alias.asname or alias.name)
+
+        # Find called helpers missing from local scope but present in utils.py
+        missing: set[str] = set()
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Call):
+                func = node.func
+                if (
+                    isinstance(func, _ast.Name)
+                    and func.id.startswith("_")
+                    and func.id not in local_names
+                    and func.id in utils_helpers
+                ):
+                    missing.add(func.id)
+
+        if not missing:
+            continue
+
+        # Build the import line and inject after the last existing import line
+        names_sorted = ", ".join(sorted(missing))
+        import_line = f"from utils import {names_sorted}"
+
+        # Check if a 'from utils import' line already exists (partial)
+        existing_match = re.search(r"^from utils import (.+)$", source, re.MULTILINE)
+        if existing_match:
+            existing_names = {n.strip() for n in existing_match.group(1).split(",")}
+            combined = sorted(existing_names | missing)
+            new_line = f"from utils import {', '.join(combined)}"
+            source = source[:existing_match.start()] + new_line + source[existing_match.end():]
+        else:
+            # Find the last import line and insert after it
+            import_end = 0
+            for node in _ast.walk(tree):
+                if isinstance(node, (_ast.Import, _ast.ImportFrom)):
+                    # node.end_lineno is available in Python 3.8+
+                    end = getattr(node, "end_lineno", node.lineno)
+                    if end > import_end:
+                        import_end = end
+
+            lines = source.splitlines(keepends=True)
+            insert_at = import_end  # 0-based: after line at index import_end-1
+            lines.insert(insert_at, import_line + "\n")
+            source = "".join(lines)
+
+        path.write_text(source, encoding="utf-8")
+        change = f"Injected: {import_line}"
+        results[str(path.relative_to(output_dir))] = [change]
+        if verbose:
+            print(f"  [design-validator] Fixed {path.name}: {change}")
+
+    return results
+
+
 def fix_project(output_dir: str | Path, verbose: bool = True) -> dict[str, list[str]]:
     """
     Run deterministic design fixes on all .py files in an output directory.
@@ -332,6 +528,10 @@ def fix_project(output_dir: str | Path, verbose: bool = True) -> dict[str, list[
         if changes:
             results[str(path.relative_to(output_dir))] = changes
 
+    # Project-level fix: inject missing 'from utils import ...' in view files
+    utils_fixes = _fix_missing_utils_imports(output_dir, verbose=verbose)
+    results.update(utils_fixes)
+
     if results:
         if verbose:
             print(f"\n[design-validator] Fixed {len(results)} file(s) in {output_dir}")
@@ -345,6 +545,66 @@ def fix_project(output_dir: str | Path, verbose: bool = True) -> dict[str, list[
 # ---------------------------------------------------------------------------
 # Syntax + logic validator
 # ---------------------------------------------------------------------------
+
+def summarise_business_notes(output_dir: str | Path) -> list[str]:
+    """
+    Scan the generated project for business-relevant details a developer needs to know
+    before running/testing the app:
+      - Hardcoded credentials (username/password literals in authenticate/login handlers)
+      - Default screen / navigation flow
+      - Sample data counts
+      - Input fields and their types
+    Returns a list of human-readable note strings.
+    """
+    output_dir = Path(output_dir)
+    notes: list[str] = []
+
+    # 1. Credentials — scan main.py and all .py files for patterns like
+    #    `if username == "..." and password == "..."`
+    cred_pattern = re.compile(
+        r'(?:username|user|login|email)\s*==\s*["\']([^"\']+)["\'].*?'
+        r'(?:password|senha|secret|pin)\s*==\s*["\']([^"\']+)["\']',
+        re.DOTALL | re.IGNORECASE,
+    )
+    for path in output_dir.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for m in cred_pattern.finditer(source):
+            notes.append(f"Login credentials  →  user: \"{m.group(1)}\"  |  password: \"{m.group(2)}\"")
+
+    # 2. Default/initial screen
+    screen_pattern = re.compile(r'current_screen\s*=\s*["\']([^"\']+)["\']')
+    for path in [output_dir / "state" / "store.py", output_dir / "main.py"]:
+        if path.exists():
+            source = path.read_text(encoding="utf-8")
+            m = screen_pattern.search(source)
+            if m:
+                notes.append(f"Initial screen     →  \"{m.group(1)}\"")
+                break
+
+    # 3. Sample data counts — scan store.py for lists
+    store_py = output_dir / "state" / "store.py"
+    if store_py.exists():
+        source = store_py.read_text(encoding="utf-8")
+        list_pattern = re.compile(r'(\w+)\s*=\s*\[(?:[^\[\]]*\{[^\}]+\}[^\[\]]*)+\]')
+        for m in list_pattern.finditer(source):
+            items = len(re.findall(r'\{', m.group(0)))
+            if items > 0:
+                notes.append(f"Sample data        →  {m.group(1)}: {items} item(s)")
+
+    # 4. Password fields without input_type="password"
+    pw_missing = []
+    for path in output_dir.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for m in re.finditer(
+            r'Input\s*\([^)]*placeholder\s*=\s*["\'](?:password|senha|pin|secret)["\'](?![^)]*input_type)',
+            source, re.IGNORECASE | re.DOTALL
+        ):
+            pw_missing.append(path.name)
+    if pw_missing:
+        notes.append(f"WARNING: password Input missing input_type=\"password\" in: {', '.join(set(pw_missing))}")
+
+    return notes
+
 
 def check_syntax(path: Path) -> tuple[bool, str]:
     """
@@ -423,6 +683,50 @@ def check_logic(path: Path) -> list[str]:
     return warnings
 
 
+def check_undefined_helpers(path: Path, project_root: Path) -> list[str]:
+    """
+    Detect calls to private helper functions (_name) in view/component files that are
+    neither defined nor imported in that file.  These crash at runtime with NameError.
+
+    Returns a list of warning strings.
+    """
+    import ast as _ast
+
+    source = path.read_text(encoding="utf-8")
+    try:
+        tree = _ast.parse(source)
+    except SyntaxError:
+        return []
+
+    # Collect names defined or imported in this file
+    local_names: set[str] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            local_names.add(node.name)
+        elif isinstance(node, _ast.Import):
+            for alias in node.names:
+                local_names.add(alias.asname or alias.name.split('.')[0])
+        elif isinstance(node, _ast.ImportFrom):
+            for alias in node.names:
+                local_names.add(alias.asname or alias.name)
+        elif isinstance(node, _ast.Assign):
+            for target in node.targets:
+                if isinstance(target, _ast.Name):
+                    local_names.add(target.id)
+
+    # Collect all called names that look like private helpers (_name)
+    warnings = []
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call):
+            func = node.func
+            if isinstance(func, _ast.Name) and func.id.startswith('_') and func.id not in local_names:
+                warnings.append(
+                    f"'{func.id}()' called but not defined/imported in this file — will crash with NameError.\n"
+                    f"      Fix: define it in this file OR create utils.py and import: from utils import {func.id}"
+                )
+    return warnings
+
+
 def validate_project(output_dir: str | Path, verbose: bool = True) -> bool:
     """
     Run syntax + logic checks on all non-test, non-init .py files.
@@ -447,6 +751,7 @@ def validate_project(output_dir: str | Path, verbose: bool = True) -> bool:
             all_ok = False
 
         warns = check_logic(path)
+        warns += check_undefined_helpers(path, output_dir)
         if warns:
             logic_warnings.append((path, warns))
 
@@ -465,6 +770,192 @@ def validate_project(output_dir: str | Path, verbose: bool = True) -> bool:
             print("[code-validator] All files pass syntax and logic checks")
 
     return all_ok
+
+
+# ---------------------------------------------------------------------------
+# Syntax fixer loop (deterministic + LLM, up to N iterations)
+# ---------------------------------------------------------------------------
+
+def _collect_syntax_errors(output_dir: Path) -> list[tuple[Path, str]]:
+    """Return (path, error_message) for every .py file with a syntax error."""
+    errors: list[tuple[Path, str]] = []
+    for path in sorted(output_dir.rglob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        if "test_" in path.name or path.name.startswith("test"):
+            continue
+        ok, err = check_syntax(path)
+        if not ok:
+            errors.append((path, err))
+    return errors
+
+
+_SYNTAX_FIX_SYSTEM = """\
+You are a Python syntax error fixer for P2M (Python2Mobile) view files.
+Fix ONLY the syntax error described — do not refactor or change logic.
+The most common errors are:
+  - Unterminated string literal: a class_ or other string argument was split across
+    two lines without backslash continuation. Join the lines so the string stays on one line.
+  - Unmatched parenthesis: an extra ) or missing ) from a nested call.
+  - Missing colon, comma, or quote character.
+
+Respond with the COMPLETE corrected Python source only.
+No explanation, no markdown fences, no ```python``` block.
+"""
+
+
+def fix_syntax_with_llm(
+    files_with_errors: list[tuple[Path, str]],
+    model_provider: str = "openai",
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    verbose: bool = True,
+) -> int:
+    """
+    Use an LLM to fix syntax errors in the given files.
+    Returns the number of files successfully fixed.
+    """
+    import os
+    import ast
+
+    fixed_count = 0
+    for path, error_msg in files_with_errors:
+        source = path.read_text(encoding="utf-8")
+        user_msg = f"Fix this Python syntax error:\n\nError: {error_msg}\n\nFile: {path.name}\n\n{source}"
+        try:
+            if model_provider == "anthropic":
+                import anthropic
+                key = api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("P2M_ANTHROPIC_API_KEY")
+                if not key:
+                    continue
+                client = anthropic.Anthropic(api_key=key)
+                name = model_name or "claude-sonnet-4-6"
+                msg = client.messages.create(
+                    model=name, max_tokens=4096,
+                    system=_SYNTAX_FIX_SYSTEM,
+                    messages=[{"role": "user", "content": user_msg}],
+                )
+                fixed = msg.content[0].text.strip()
+
+            elif model_provider == "openai":
+                import openai
+                key = api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("P2M_OPENAI_API_KEY")
+                if not key:
+                    continue
+                client = openai.OpenAI(api_key=key)
+                name = model_name or "gpt-4o"
+                resp = client.chat.completions.create(
+                    model=name, max_tokens=4096,
+                    messages=[
+                        {"role": "system", "content": _SYNTAX_FIX_SYSTEM},
+                        {"role": "user", "content": user_msg},
+                    ],
+                )
+                fixed = resp.choices[0].message.content.strip()
+            else:
+                continue
+
+            # Strip accidental markdown fences
+            if fixed.startswith("```"):
+                fixed = re.sub(r'^```[a-z]*\n?', '', fixed)
+                fixed = re.sub(r'\n?```$', '', fixed)
+
+            # Only write back if the result parses cleanly
+            try:
+                ast.parse(fixed)
+                path.write_text(fixed, encoding="utf-8")
+                fixed_count += 1
+                if verbose:
+                    print(f"    ✓ LLM fixed syntax in {path.name}")
+            except SyntaxError:
+                if verbose:
+                    print(f"    ✗ LLM response still has syntax errors in {path.name} — skipping")
+
+        except Exception as exc:
+            if verbose:
+                print(f"    ⚠ LLM syntax fix failed for {path.name}: {exc}")
+
+    return fixed_count
+
+
+def validate_and_fix_loop(
+    output_dir: str | Path,
+    model_provider: str = "openai",
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    max_iterations: int = 5,
+    verbose: bool = True,
+) -> bool:
+    """
+    Run deterministic design fixes + syntax validation in a loop.
+    If syntax errors remain after deterministic fixes, call the LLM to fix them.
+    Repeats up to max_iterations times.  Returns True if all files are clean.
+    """
+    output_dir = Path(output_dir)
+
+    for attempt in range(1, max_iterations + 1):
+        prefix = f"[iter {attempt}/{max_iterations}]" if attempt > 1 else ""
+
+        # Pass 1 — deterministic fixes (includes unterminated-string joiner)
+        fix_project(output_dir, verbose=verbose)
+
+        # Pass 2 — collect remaining syntax errors
+        errors = _collect_syntax_errors(output_dir)
+
+        if not errors:
+            # Also run logic checks for warnings (non-blocking)
+            _print_logic_warnings(output_dir, verbose)
+            if verbose:
+                if attempt > 1:
+                    print(f"[code-validator] ✅ All files clean after {attempt} iteration(s)")
+                else:
+                    print("[code-validator] All files pass syntax and logic checks")
+            return True
+
+        if verbose:
+            if attempt == 1:
+                print("\n[code-validator] Syntax errors found:")
+            else:
+                print(f"\n[code-validator] {prefix} Still {len(errors)} file(s) with errors:")
+            for path, err in errors:
+                print(f"  ✗ {path.relative_to(output_dir)}: {err}")
+
+        if attempt == max_iterations:
+            break
+
+        # Pass 3 — LLM fixer for remaining errors
+        if verbose:
+            print(f"[code-fixer] Attempt {attempt}/{max_iterations - 1}: fixing {len(errors)} file(s) with LLM...")
+        fixed = fix_syntax_with_llm(errors, model_provider, model_name, api_key, verbose)
+        if fixed == 0:
+            if verbose:
+                print("[code-fixer] No files could be fixed — stopping early.")
+            break
+
+    # Final: print remaining errors
+    errors = _collect_syntax_errors(output_dir)
+    if errors and verbose:
+        print(f"\n⚠️  {len(errors)} file(s) still have syntax errors after {max_iterations} iteration(s).")
+        print("   Run `p2m run --skip-validation` to see the full error, or fix manually.")
+    return len(errors) == 0
+
+
+def _print_logic_warnings(output_dir: Path, verbose: bool) -> None:
+    """Print non-blocking logic warnings (no return value — informational only)."""
+    if not verbose:
+        return
+    any_warn = False
+    for path in sorted(output_dir.rglob("*.py")):
+        if path.name == "__init__.py" or "test_" in path.name or path.name.startswith("test"):
+            continue
+        warns = check_logic(path)
+        warns += check_undefined_helpers(path, output_dir)
+        if warns:
+            if not any_warn:
+                print("\n[code-validator] Logic warnings:")
+                any_warn = True
+            for w in warns:
+                print(f"  ⚠ {path.relative_to(output_dir)}: {w}")
 
 
 # ---------------------------------------------------------------------------

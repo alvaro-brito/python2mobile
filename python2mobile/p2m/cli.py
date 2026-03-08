@@ -382,21 +382,24 @@ def imagine(description: str, provider: str, model: str, api_key: str, name: str
             click.echo(f"❌ Agent error: {exc}", err=True)
             sys.exit(1)
 
-        # ── Pass 1: deterministic design + syntax fixes ───────────────────
-        click.echo("\n🔧 Running design validator...")
-        from p2m.imagine.design_validator import fix_project, validate_project
-        fix_project(output_dir, verbose=True)
+        # ── Validate + auto-fix loop (up to 5 iterations) ───────────────
+        click.echo("\n🔧 Running design validator + code fixer...")
+        from p2m.imagine.design_validator import validate_and_fix_loop, summarise_business_notes
+        validate_and_fix_loop(
+            output_dir,
+            model_provider=provider,
+            model_name=model,
+            api_key=api_key,
+            max_iterations=5,
+            verbose=True,
+        )
 
-        # ── Pass 2: syntax + logic checks ────────────────────────────────
-        click.echo("🔍 Running code validator...")
-        valid = validate_project(output_dir, verbose=True)
-        if not valid:
-            click.echo(
-                "\n⚠️  Syntax/logic issues found above. "
-                "Run `p2m run --skip-validation` to see the full error, "
-                "or fix the files before running.",
-                err=True,
-            )
+        # ── Business notes — show credentials, sample data, etc. ─────────
+        notes = summarise_business_notes(output_dir)
+        if notes:
+            click.echo("\n📋 App notes (business particularities):")
+            for note in notes:
+                click.echo(f"   {note}")
 
         click.echo(f"\n✅ Project generated in: {output_dir}/")
         click.echo(f"\n💡 Next steps:")

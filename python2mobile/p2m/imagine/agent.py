@@ -118,6 +118,135 @@ OPERATOR LOGIC RULES (violations cause silent calculation bugs):
 - press_operator: stores first_num + operator, sets awaiting_operand=True only
 - press_equals: calls _calculate(store.first_num, store.operator, float(store.display))
 
+## BANKING / FINANCE / FORM-HEAVY APP  (login, forms, statements, transfers)
+
+This blueprint is for apps with: login screen, dashboard, statement list, transfer form.
+Theme: LIGHT — professional blue accent.
+
+⚠️  KEY RULE: Form containers use Column OR Container with `flex flex-col gap-N`.
+    NEVER bare `flex` without `flex-col` — causes all elements to appear side-by-side.
+
+```
+Root screen:      bg-gray-50 min-h-screen
+App header:       bg-blue-600 px-4 pt-10 pb-6 shadow-md
+  Header title:   text-white text-2xl font-bold
+  Balance label:  text-blue-200 text-sm font-medium
+  Balance value:  text-white text-4xl font-bold mt-1
+
+Login card (centered on screen):
+  root:  Column(class_="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4")
+  card:  Column(class_="bg-white rounded-2xl shadow-md p-8 w-full gap-4")
+  Note: use Column — NOT Container with bare flex — so children stack vertically
+
+Section title:    text-gray-500 text-xs font-semibold uppercase tracking-widest mb-2 px-4
+Action button:    bg-blue-600 hover:bg-blue-500 active:bg-blue-700
+                  text-white text-base font-semibold rounded-xl px-5 py-3 w-full shadow-sm
+                  transition-colors duration-150
+Secondary btn:    bg-blue-50 hover:bg-blue-100 active:bg-blue-200
+                  text-blue-700 text-base font-semibold rounded-xl px-5 py-3 w-full
+                  transition-colors duration-150
+Transaction +ve:  text-green-600 text-base font-semibold
+Transaction -ve:  text-red-500 text-base font-semibold
+Input field:      bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base
+                  text-gray-900 placeholder-gray-400 w-full
+                  focus:border-blue-400 focus:ring-2 focus:ring-blue-50
+Statement row:    bg-white rounded-xl px-4 py-3 flex flex-row items-center gap-3
+                  border border-gray-100 mb-2
+Quick action:     bg-blue-50 hover:bg-blue-100 rounded-2xl p-4 flex flex-col items-center gap-2
+                  text-blue-700 text-sm font-semibold (icon + label column)
+Nav tab active:   text-blue-600 text-xs font-semibold
+Nav tab inactive: text-gray-400 text-xs
+```
+
+Login screen structure (canonical — COPY EXACTLY):
+```python
+def login_view(store) -> Column:
+    root = Column(class_="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4")
+
+    # Logo / brand area
+    brand = Column(class_="items-center mb-8 gap-2")
+    brand.add(Text("🏦", class_="text-6xl"))
+    brand.add(Text("Meu Banco", class_="text-blue-600 text-3xl font-bold tracking-tight"))
+    brand.add(Text("Bem-vindo de volta", class_="text-gray-500 text-base"))
+    root.add(brand)
+
+    # Form card — use Column so children stack vertically
+    card = Column(class_="bg-white rounded-2xl shadow-md p-8 w-full gap-4")
+    card.add(Input(placeholder="CPF ou e-mail", value=store.username,
+                   on_change="update_username",
+                   class_="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 placeholder-gray-400 w-full"))
+    card.add(Input(placeholder="Senha", value=store.password,
+                   on_change="update_password", input_type="password",
+                   class_="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 placeholder-gray-400 w-full"))
+    if store.error_message:
+        card.add(Text(store.error_message, class_="text-red-500 text-sm text-center"))
+    card.add(Button("Entrar", on_click="login",
+                    class_="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-base font-semibold rounded-xl py-3 w-full shadow-sm transition-colors duration-150"))
+    root.add(card)
+    return root
+```
+
+Transfer form structure (canonical — COPY EXACTLY):
+```python
+# state/store.py — required fields
+store = AppState(
+    ...
+    transfer_value="",       # typed amount string, updated by on_change
+    transfer_recipient="",   # typed recipient, updated by on_change
+    error_message="",
+)
+
+# main.py — separate update_* handlers, 0-arg submit handler
+def update_transfer_value(value: str):
+    store.transfer_value = value
+
+def update_transfer_recipient(value: str):
+    store.transfer_recipient = value
+
+def perform_transfer():           # ← ZERO args — reads from store
+    amount_str = (store.transfer_value or "").strip()
+    recipient = (store.transfer_recipient or "").strip()
+    if not amount_str or not recipient:
+        store.error_message = "Preencha todos os campos"
+        return
+    try:
+        amount = float(amount_str.replace(",", "."))
+        if amount <= 0:
+            raise ValueError
+        if amount > store.balance:
+            store.error_message = "Saldo insuficiente"
+            return
+        store.balance -= amount
+        store.transactions.append({"amount": -amount, "recipient": recipient})
+        store.transfer_value = ""
+        store.transfer_recipient = ""
+        store.current_screen = "statement"
+        store.error_message = ""
+    except ValueError:
+        store.error_message = "Valor inválido"
+
+# views/transfer.py — on_change wired, button 0-arg
+def transfer_view(store) -> Column:
+    root = Column(class_="min-h-screen bg-gray-50")
+    header = Container(class_="bg-blue-600 px-4 pt-10 pb-6 shadow-md")
+    header.add(Text("Transferência PIX", class_="text-white text-2xl font-bold"))
+    root.add(header)
+
+    form = Column(class_="bg-white rounded-2xl shadow-md p-6 m-4 gap-4")
+    form.add(Input(placeholder="Valor (R$)", value=store.transfer_value or "",
+                   on_change="update_transfer_value",       # ← on_change wired, NEVER empty ""
+                   class_="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 ..."))
+    form.add(Input(placeholder="Destinatário / Chave PIX", value=store.transfer_recipient or "",
+                   on_change="update_transfer_recipient",   # ← on_change wired, NEVER empty ""
+                   class_="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 ..."))
+    if store.error_message:
+        form.add(Text(store.error_message, class_="text-red-500 text-sm text-center"))
+    form.add(Button("Confirmar", on_click="perform_transfer",   # ← 0 args, reads store
+                    class_="bg-blue-600 ... rounded-xl py-3 w-full"))
+    root.add(form)
+    return root
+```
+
 ## TODO / TASK MANAGER
 
 ```
@@ -260,12 +389,39 @@ def item_card(item: dict, store) -> Card:
 
 ## UI Components — complete reference
 
+### ⛔ CRITICAL: Container flex direction rule
+
+`Container` renders as a plain `<div>`. Without an explicit flex direction its children
+stack vertically (block flow). But if you add `flex` without `flex-col`, Tailwind
+defaults to **flex-direction: row** — ALL children appear side by side. This is the
+most common layout bug: a form with inputs and button all on one horizontal line.
+
+| You write                                  | What happens                         |
+|--------------------------------------------|--------------------------------------|
+| `Container(class_="... flex ...")`         | ⛔ flex-row! children side-by-side   |
+| `Container(class_="... flex flex-col ...")`| ✓ vertical stack                     |
+| `Container(class_="... bg-white p-6 ...")`| ✓ block div — children stack fine    |
+
+**Rule**: if you add `flex` to a Container/Card, you MUST also add `flex-col`.
+For form containers that stack inputs and a button: use `flex flex-col gap-4` OR
+simply use `Column` (which always has `flex flex-col`).
+
+```python
+# WRONG — bare flex defaults to flex-row → everything horizontal!
+Container(class_="bg-white p-6 flex items-center gap-3")
+
+# CORRECT — explicit direction
+Container(class_="bg-white p-6 flex flex-col gap-4")
+# or just use Column for vertical content
+Column(class_="bg-white p-6 rounded-2xl shadow-md gap-4")
+```
+
 ```python
 # Layout
 Column(class_="flex flex-col gap-4")
 Row(class_="flex flex-row items-center gap-2")
-Container(class_="bg-white p-4 rounded-xl")
-Card(class_="bg-white rounded-xl shadow-sm border border-gray-100 p-4")
+Container(class_="bg-white p-4 rounded-xl")            # block div — children stack vertically
+Card(class_="bg-white rounded-xl shadow-sm border border-gray-100 p-4")  # block div
 ScrollView(class_="flex-1 overflow-y-auto")
 Carousel(class_="px-4 py-2 gap-2")          # horizontal scroll, no extra CSS needed
 
@@ -287,6 +443,68 @@ Input(
     on_change="handler_name",         # receives the typed string automatically
     class_="border border-gray-300 rounded-xl px-3 py-2 text-sm w-full",
 )
+Input(
+    placeholder="Password",
+    value=store.password,
+    on_change="update_password",
+    input_type="password",            # ← REQUIRED for password fields — hides characters
+    class_="border border-gray-300 rounded-xl px-3 py-2 text-sm w-full",
+)
+# RULE: any field whose placeholder or label contains "password", "senha", "pin",
+# "secret", "passcode" MUST use input_type="password". Default is "text".
+```
+
+## CALLING CONVENTIONS — handler signatures (CRITICAL)
+
+⚠️  The P2M event system calls handlers with SPECIFIC argument counts.
+    WRONG signatures crash the app silently or with "missing N required positional arguments".
+
+| Trigger                           | How handler is called         | Correct signature              |
+|-----------------------------------|-------------------------------|--------------------------------|
+| Button on_click (no args)         | `handler()`                   | `def handler():`               |
+| Button on_click_args=["a","b"]    | `handler("a", "b")`           | `def handler(a: str, b: str):` |
+| Input  on_change                  | `handler(new_value)`          | `def handler(value: str):`     |
+
+### Login form — canonical pattern
+
+WRONG — button calls login() with 0 args but handler expects 2:
+```python
+# WRONG
+def login(username: str, password: str): ...       # ← requires 2 args
+Button("Login", on_click="login")                  # ← called with 0 args → crash
+Input(on_change="login")                           # ← called with 1 arg  → crash
+```
+
+CORRECT — each Input updates its own field; Button reads from store:
+```python
+# CORRECT
+def update_username(value: str):
+    store.username = value
+
+def update_password(value: str):
+    store.password = value
+
+def login():                                       # ← 0 args — reads store directly
+    if store.username == "admin" and store.password == "1234":
+        store.current_screen = "home"
+    else:
+        store.error_message = "Credenciais inválidas"
+
+events.register("update_username", update_username)
+events.register("update_password", update_password)
+events.register("login", login)
+
+Input(placeholder="Usuário", value=store.username, on_change="update_username", ...)
+Input(placeholder="Senha",   value=store.password, on_change="update_password",
+      input_type="password", ...)
+Button("Entrar", on_click="login")                 # ← login() called with 0 args ✓
+```
+
+Apply the same pattern to any form: search, filters, PIX transfer, settings.
+Every Input field gets its own `update_<field>` handler.
+The submit Button handler always takes 0 args and reads from store.
+
+```python
 
 # Modal (always in tree; render engine hides it when visible=False)
 Modal(
@@ -734,15 +952,18 @@ Cover these in tests:
 
 ```
 ./                                ← output directory IS the project root (NO extra subdirectory)
-├── main.py                       ← imports, ALL event handlers + utility helpers, create_view()
+├── main.py                       ← imports, event handlers, create_view() — NO view logic here
+├── utils.py                      ← shared pure helpers (_format_currency, _format_date…)
+│                                    REQUIRED if any helper is used by more than one view file
 ├── p2m.toml                      ← project config
 ├── state/
 │   ├── __init__.py               ← empty
 │   └── store.py                  ← AppState instance + data constants
 ├── views/
 │   ├── __init__.py               ← empty
-│   └── <screen>.py               ← one file per screen (home, detail, settings…)
-│                                    contains factory helpers + <screen>_view(store) function
+│   └── <screen>.py               ← one file per screen; NEVER name any view "main.py"
+│                                    private helpers used only here → define at top of file
+│                                    private helpers used by multiple views → import from utils
 ├── components/
 │   ├── __init__.py               ← empty
 │   └── <component>.py            ← one file per reusable component
@@ -752,6 +973,7 @@ Cover these in tests:
 ```
 
 IMPORTANT: write_file("main.py", ...) — NOT write_file("<project_name>/main.py", ...)
+IMPORTANT: write_file("utils.py", ...) whenever helpers are shared across view files.
 
 ## main.py — canonical template
 
@@ -960,6 +1182,68 @@ def test_per_item_handler():
     If integer indices are needed, convert inside the handler: `int(row)`.
     NEVER: `def handle(row: int, col: int)` with `on_click_args=[row, col]` — crashes.
     ALWAYS: `def handle(row: str, col: str)` with `on_click_args=[str(row), str(col)]`.
+22. HANDLER CALLING CONVENTIONS — match signature to trigger exactly:
+    - Button on_click (no on_click_args)  → `def handler():` (ZERO arguments)
+    - Button on_click_args=["a","b"]      → `def handler(a: str, b: str):`
+    - Input  on_change                    → `def handler(value: str):` (ONE argument)
+    NEVER give a Button handler positional args it won't receive — that crashes.
+
+    CORRECT login/form pattern:
+      def update_email(value: str): store.email = value       # ← Input on_change
+      def update_password(value: str): store.password = value  # ← Input on_change
+      def login(): ...reads store.email, store.password...    # ← Button on_click (0 args)
+    WRONG: def login(email: str, password: str) with Button on_click="login" — crashes.
+
+    CORRECT transfer/PIX pattern:
+      def update_transfer_value(value: str): store.transfer_value = value
+      def update_transfer_recipient(value: str): store.transfer_recipient = value
+      def perform_transfer(): ...reads store.transfer_value, store.transfer_recipient...
+      # Button on_click="perform_transfer" — ZERO args
+    WRONG: def perform_transfer(value: str, recipient: str) with Button on_click — crashes.
+
+    This applies to ALL multi-field forms: cart checkout, booking, settings save, etc.
+    Pattern: one update_* handler per Input, one 0-arg submit handler for the Button.
+
+26. Input on_change MUST NEVER be an empty string "":
+    on_change="" is silently ignored (the field becomes read-only — user can type but nothing
+    updates, and the submit handler reads empty strings from the store).
+    WRONG:   Input(placeholder="Valor", value="", on_change="", ...)
+    CORRECT: Input(placeholder="Valor", value=store.transfer_value or "",
+                   on_change="update_transfer_value", ...)
+    Rule: if you don't need on_change on an Input, omit the parameter entirely.
+    If you DO have a form submit button, EVERY form Input MUST have a wired on_change handler.
+23. NEVER name a view file `main.py`.  `main.py` is reserved for the project entry point.
+    Use descriptive names: `home.py`, `login.py`, `dashboard.py`, `profile.py`, `detail.py`.
+    Naming a view `views/main.py` causes the `p2m run` validator to treat it as the entry
+    point and report spurious "Missing create_view()" errors.
+24. Container flex direction — MANDATORY rule:
+    If you add `flex` to a Container or Card class, you MUST also add `flex-col` to stack
+    children vertically.  Bare `flex` defaults to flex-row and makes ALL children appear
+    side-by-side (inputs, buttons, text all in one horizontal line — completely broken).
+    WRONG:   Container(class_="bg-white p-6 flex items-center gap-4")   ← FLEX-ROW!
+    CORRECT: Container(class_="bg-white p-6 flex flex-col gap-4")        ← vertical stack
+    CORRECT: Column(class_="bg-white p-6 rounded-2xl shadow-md gap-4")   ← always vertical
+    For login/register/settings forms: ALWAYS use Column or Container with flex-col.
+25. HELPER FUNCTION SCOPE — helpers defined in main.py are NOT accessible in view files.
+    View files do NOT import from main.py.  If a view file calls `_format_currency()` or
+    any `_helper()` not defined in that file, it will crash with NameError at runtime.
+    Rules:
+    a) Helper used by ONE view file only → define it at the TOP of that view file.
+    b) Helper used by MULTIPLE view files → define it in `utils.py` (project root) and
+       import it in every view that needs it: `from utils import _format_currency`
+    c) main.py helpers are ONLY for event handlers in main.py itself — NOT for views.
+
+    WRONG:
+      # main.py
+      def _format_currency(v): return f"R${v:.2f}"   ← defined here
+      # views/dashboard.py
+      Text(_format_currency(balance), ...)            ← NameError! not imported
+    CORRECT:
+      # utils.py
+      def _format_currency(v): return f"R${v:.2f}"
+      # views/dashboard.py
+      from utils import _format_currency             ← explicit import
+      Text(_format_currency(balance), ...)            ← works
 
 ── TAILWIND DESIGN RULES (treat these as BLOCKING — violating them = rejected output) ──
 
@@ -1139,14 +1423,15 @@ def run_imagine_agent(
         f"CRITICAL: Write ALL files at the ROOT level — do NOT create a subdirectory.\n"
         f"Use write_file('main.py', ...) NOT write_file('{project_name}/main.py', ...).\n\n"
         f"Files to generate:\n"
-        f"1. `main.py`              — UI plan comment + utility helpers + ALL event handlers\n"
-        f"2. `p2m.toml`             — project config (port 3000, entry = main.py)\n"
-        f"3. `state/__init__.py`    — empty\n"
-        f"4. `state/store.py`       — AppState + realistic sample data (5+ items)\n"
-        f"5. `views/__init__.py`    — empty\n"
-        f"6. `views/<screen>.py`    — factory helpers + <screen>_view(store) function\n"
-        f"7. `components/__init__.py` — empty\n"
-        f"8. `components/<name>.py` — reusable components if needed\n"
+        f"1. `main.py`              — event handlers only; NO view logic; no private helpers used by views\n"
+        f"2. `utils.py`             — ALL shared pure helpers (_format_currency, _format_date, etc.)\n"
+        f"                            ANY helper called from a view file MUST be here (not in main.py)\n"
+        f"3. `p2m.toml`             — project config (port 3000, entry = main.py)\n"
+        f"4. `state/__init__.py`    — empty\n"
+        f"5. `state/store.py`       — AppState + realistic sample data (5+ items)\n"
+        f"6. `views/__init__.py`    — empty\n"
+        f"7. `views/<screen>.py`    — NEVER named main.py; import helpers: from utils import _helper\n"
+        f"8. `components/__init__.py` — empty\n"
         f"9. `tests/__init__.py`    — empty\n"
         f"10. `tests/test_app.py`   — at least 6 pytest tests\n\n"
         f"Finish by calling `list_output_files()` to confirm all files are written."
