@@ -21,6 +21,7 @@ import Troubleshooting from "./pages/docs/Troubleshooting";
 import Architecture from "./pages/docs/Architecture";
 import Publishing from "./pages/docs/Publishing";
 import PublishingWizard from "./pages/docs/PublishingWizard";
+import Resources from "./pages/docs/Resources";
 
 
 function Router() {
@@ -41,6 +42,7 @@ function Router() {
       <Route path="/docs/architecture" component={() => <DocsLayout><Architecture /></DocsLayout>} />
       <Route path="/docs/publishing" component={() => <DocsLayout><Publishing /></DocsLayout>} />
       <Route path="/docs/publishing-wizard" component={() => <DocsLayout><PublishingWizard /></DocsLayout>} />
+      <Route path="/docs/resources" component={() => <DocsLayout><Resources /></DocsLayout>} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

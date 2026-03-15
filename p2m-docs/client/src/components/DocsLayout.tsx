@@ -13,6 +13,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
     { href: "/docs/getting-started", label: t("sidebar.gettingStarted"), icon: "🚀" },
     { href: "/docs/installation", label: t("sidebar.installation"), icon: "⚙️" },
     { href: "/docs/commands", label: t("sidebar.commands"), icon: "💻" },
+    { href: "/docs/resources", label: t("sidebar.resources"), icon: "📚" },
     { href: "/docs/testing", label: t("sidebar.testing"), icon: "🧪" },
     {
       label: t("sidebar.examples"),

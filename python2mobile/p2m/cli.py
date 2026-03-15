@@ -106,7 +106,7 @@ def run(port: int, no_frame: bool, skip_validation: bool):
 
 
 @cli.command()
-@click.option("--target", type=click.Choice(["flutter", "react-native", "web", "android", "ios"]),
+@click.option("--target", type=click.Choice(["flutter", "react-native", "android", "ios"]),
               default="flutter", help="Build target")
 @click.option("--force", is_flag=True, help="Force rebuild")
 @click.option("--skip-validation", is_flag=True, help="Skip code validation")
@@ -120,7 +120,7 @@ def run(port: int, no_frame: bool, skip_validation: bool):
               help="Skip platform prerequisite checks (flutter, swift, node, java)")
 def build(target: str, force: bool, skip_validation: bool, skip_tests: bool, no_agent: bool,
           skip_validate_fix: bool, max_fix_iterations: int, skip_preflight: bool):
-    """Build app for production (Flutter, React Native, Web, Android, iOS)"""
+    """Build app for production (Flutter, React Native, Android, iOS)"""
 
     click.echo(f"🔨 Building for {target}...")
 
@@ -231,9 +231,6 @@ def build(target: str, force: bool, skip_validation: bool, skip_tests: bool, no_
         elif target == "react-native":
             click.echo("⚛️  Generating React Native (TypeScript)...")
             generator.generate_react_native(project_files, str(output_dir))
-        elif target == "web":
-            click.echo("🌐 Generating Web (HTML/CSS/JS)...")
-            generator.generate_web(project_files, str(output_dir))
         elif target == "android":
             click.echo("🤖 Generating Android (Java + XML)...")
             generator.generate_android(project_files, str(output_dir))

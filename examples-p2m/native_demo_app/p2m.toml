@@ -1,0 +1,20 @@
+[project]
+name = "NativeDemo"
+version = "0.1.0"
+entry = "main.py"
+
+[build]
+target = ["android", "ios"]
+generator = "flutter"
+llm_provider = "anthropic"
+llm_model = "claude-sonnet-4-6"
+output_dir = "./build"
+cache = true
+
+[devserver]
+port = 3000
+hot_reload = true
+mobile_frame = true
+
+[style]
+system = "tailwind"

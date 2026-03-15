@@ -5,6 +5,8 @@ and full WebSocket-based interactivity.
 
 from typing import Any, Dict, List
 from jinja2 import Template
+import json as _json
+import uuid as _uuid
 
 
 # WebSocket client injected into every page
@@ -47,6 +49,10 @@ _WS_SCRIPT = """
               try { restored.setSelectionRange(selEnd, selEnd); } catch (_) {}
             }
           }
+
+          /* Re-initialize any maps present in the new content */
+          p2mMapsCheck();
+
         } else if (msg.type === 'error') {
           console.error('[P2M]', msg.message);
         }
@@ -82,6 +88,181 @@ _WS_SCRIPT = """
       }
     }, 150);  /* 150 ms debounce — fast enough to feel instant */
   };
+
+  /* ── P2M Map (Leaflet.js) ─────────────────────────────────────────── */
+
+  /* Store Leaflet map instances so we can destroy + recreate on re-render */
+  var _p2mMaps = {};
+
+  /* Called after every render — lazy-loads Leaflet then inits all maps */
+  window.p2mMapsCheck = function () {
+    var mapEls = document.querySelectorAll('[data-p2m-map]');
+    if (!mapEls.length) return;
+
+    if (window.L) {
+      p2mInitAllMaps();
+    } else if (!window._p2mLeafletLoading) {
+      window._p2mLeafletLoading = true;
+
+      /* Load Leaflet CSS */
+      if (!document.getElementById('p2m-leaflet-css')) {
+        var lnk = document.createElement('link');
+        lnk.id = 'p2m-leaflet-css'; lnk.rel = 'stylesheet';
+        lnk.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(lnk);
+      }
+      /* Load Leaflet JS */
+      var scr = document.createElement('script');
+      scr.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      scr.onload = function () { window._p2mLeafletLoading = false; p2mInitAllMaps(); };
+      document.head.appendChild(scr);
+    }
+  };
+
+  window.p2mInitAllMaps = function () {
+    document.querySelectorAll('[data-p2m-map]').forEach(function (el) {
+      p2mInitOneMap(el.id);
+    });
+  };
+
+  window.p2mInitOneMap = function (mapId) {
+    var el = document.getElementById(mapId);
+    if (!el || !window.L) return;
+
+    /* Destroy previous Leaflet instance if the div was already used */
+    if (_p2mMaps[mapId]) {
+      try { _p2mMaps[mapId].remove(); } catch (_) {}
+      delete _p2mMaps[mapId];
+    }
+
+    /* Parse config stored in the sibling <script type="application/json"> */
+    var cfgEl = document.getElementById(mapId + '-cfg');
+    if (!cfgEl) return;
+    var cfg;
+    try { cfg = JSON.parse(cfgEl.textContent); } catch (_) { return; }
+
+    var center  = cfg.center  || [-23.5505, -46.6333];
+    var zoom    = cfg.zoom    || 13;
+    var markers = cfg.markers || [];
+    var routes  = cfg.routes  || [];
+    var circles = cfg.circles || [];
+    var opts    = cfg.interactive === false
+      ? { zoomControl: false, dragging: false, scrollWheelZoom: false, touchZoom: false }
+      : { zoomControl: true };
+
+    var map = L.map(mapId, opts).setView(center, zoom);
+    _p2mMaps[mapId] = map;
+
+    /* Tile layers */
+    var tiles = {
+      standard:  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      terrain:   'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      dark:      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    };
+    L.tileLayer(tiles[cfg.mapType] || tiles.standard, {
+      attribution: cfg.mapType === 'satellite'
+        ? 'Tiles &copy; Esri'
+        : cfg.mapType === 'terrain'
+        ? '&copy; OpenTopoMap'
+        : cfg.mapType === 'dark'
+        ? '&copy; <a href="https://carto.com">CARTO</a>'
+        : '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+
+    /* Named colours */
+    var COLORS = {
+      red:'#ef4444', green:'#22c55e', blue:'#3b82f6', orange:'#f97316',
+      purple:'#a855f7', yellow:'#eab308', gray:'#6b7280', white:'#ffffff',
+      pink:'#ec4899', teal:'#14b8a6', indigo:'#6366f1', cyan:'#06b6d4',
+    };
+
+    /* Markers / Pins */
+    markers.forEach(function (m) {
+      var color = COLORS[m.color] || m.color || '#ef4444';
+      var icon = L.divIcon({
+        html: '<div style="background:' + color + ';width:14px;height:14px;'
+            + 'border-radius:50%;border:2.5px solid #fff;'
+            + 'box-shadow:0 2px 6px rgba(0,0,0,.4);"></div>',
+        iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -10],
+        className: '',
+      });
+      var mk = L.marker([parseFloat(m.lat), parseFloat(m.lng)], { icon: icon }).addTo(map);
+      if (m.title || m.description) {
+        mk.bindPopup(
+          '<b style="font-size:13px">' + (m.title || '') + '</b>'
+          + (m.description ? '<br><span style="font-size:11px;color:#555">' + m.description + '</span>' : '')
+        );
+      }
+      if (cfg.onMarkerPress) {
+        mk.on('click', function (e) {
+          L.DomEvent.stopPropagation(e);
+          handleClick(cfg.onMarkerPress, String(m.id || m.title || ''));
+        });
+      }
+    });
+
+    /* Routes / Polylines */
+    routes.forEach(function (r) {
+      var pts = (r.coordinates || []).map(function (c) {
+        return [parseFloat(c[0]), parseFloat(c[1])];
+      });
+      if (pts.length < 2) return;
+      L.polyline(pts, {
+        color:   r.color || '#3b82f6',
+        weight:  r.width || 4,
+        opacity: 0.85,
+        dashArray: r.dashed ? '8, 6' : null,
+      }).addTo(map);
+    });
+
+    /* Circles */
+    circles.forEach(function (c) {
+      var color = COLORS[c.color] || c.color || '#3b82f6';
+      L.circle([parseFloat(c.lat), parseFloat(c.lng)], {
+        radius:      c.radius || 500,
+        color:       color,
+        fillColor:   color,
+        fillOpacity: c.fill_opacity !== undefined ? c.fill_opacity : 0.15,
+        weight:      2,
+      }).addTo(map);
+    });
+
+    /* User location dot */
+    if (cfg.showUserLocation) {
+      var uIcon = L.divIcon({
+        html: '<div style="background:#3b82f6;width:12px;height:12px;border-radius:50%;'
+            + 'border:3px solid #fff;box-shadow:0 0 0 3px rgba(59,130,246,.3);"></div>',
+        iconSize: [12, 12], iconAnchor: [6, 6], className: '',
+      });
+      L.marker(center, { icon: uIcon, zIndexOffset: 1000 }).addTo(map);
+    }
+
+    /* Map press / tap */
+    if (cfg.onMapPress) {
+      map.on('click', function (e) {
+        handleClick(cfg.onMapPress,
+          parseFloat(e.latlng.lat.toFixed(6)),
+          parseFloat(e.latlng.lng.toFixed(6)));
+      });
+    }
+
+    /* Region change (pan / zoom end) */
+    if (cfg.onRegionChange) {
+      map.on('moveend zoomend', function () {
+        var c = map.getCenter();
+        handleClick(cfg.onRegionChange,
+          parseFloat(c.lat.toFixed(6)),
+          parseFloat(c.lng.toFixed(6)),
+          map.getZoom());
+      });
+    }
+  };
+
+  /* Initialise maps present in the initial page load */
+  setTimeout(p2mMapsCheck, 0);
+
 })();
 """
 
@@ -129,7 +310,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     .mobile-content {
       width: 100%; height: 100%;
       overflow-y: auto;
-      background: #fff;
+      background: transparent;
       padding-top: 28px;
     }
     button {
@@ -219,6 +400,59 @@ class RenderEngine:
         "bg-emerald-500": "background-color:#10b981;",
         "bg-emerald-600": "background-color:#059669;",
         "bg-transparent": "background-color:transparent;",
+        # Neutral palette
+        "bg-neutral-50":  "background-color:#fafafa;",
+        "bg-neutral-100": "background-color:#f5f5f5;",
+        "bg-neutral-200": "background-color:#e5e5e5;",
+        "bg-neutral-300": "background-color:#d4d4d4;",
+        "bg-neutral-400": "background-color:#a3a3a3;",
+        "bg-neutral-500": "background-color:#737373;",
+        "bg-neutral-600": "background-color:#525252;",
+        "bg-neutral-700": "background-color:#404040;",
+        "bg-neutral-800": "background-color:#262626;",
+        "bg-neutral-900": "background-color:#171717;",
+        "bg-neutral-950": "background-color:#0a0a0a;",
+        # Zinc palette
+        "bg-zinc-50":  "background-color:#fafafa;",
+        "bg-zinc-100": "background-color:#f4f4f5;",
+        "bg-zinc-200": "background-color:#e4e4e7;",
+        "bg-zinc-300": "background-color:#d4d4d8;",
+        "bg-zinc-400": "background-color:#a1a1aa;",
+        "bg-zinc-500": "background-color:#71717a;",
+        "bg-zinc-600": "background-color:#52525b;",
+        "bg-zinc-700": "background-color:#3f3f46;",
+        "bg-zinc-800": "background-color:#27272a;",
+        "bg-zinc-900": "background-color:#18181b;",
+        "bg-zinc-950": "background-color:#09090b;",
+        # Stone palette
+        "bg-stone-800": "background-color:#292524;",
+        "bg-stone-900": "background-color:#1c1917;",
+        "bg-stone-950": "background-color:#0c0a09;",
+        # Slate palette
+        "bg-slate-800": "background-color:#1e293b;",
+        "bg-slate-900": "background-color:#0f172a;",
+        "bg-slate-950": "background-color:#020617;",
+        # Extended green/blue/red/amber/violet shades
+        "bg-green-700":  "background-color:#15803d;",
+        "bg-green-800":  "background-color:#166534;",
+        "bg-green-900":  "background-color:#14532d;",
+        "bg-green-950":  "background-color:#052e16;",
+        "bg-blue-800":   "background-color:#1e40af;",
+        "bg-blue-900":   "background-color:#1e3a8a;",
+        "bg-blue-950":   "background-color:#172554;",
+        "bg-red-700":    "background-color:#b91c1c;",
+        "bg-red-800":    "background-color:#991b1b;",
+        "bg-red-900":    "background-color:#7f1d1d;",
+        "bg-red-950":    "background-color:#450a0a;",
+        "bg-amber-500":  "background-color:#f59e0b;",
+        "bg-amber-700":  "background-color:#b45309;",
+        "bg-amber-900":  "background-color:#78350f;",
+        "bg-amber-950":  "background-color:#451a03;",
+        "bg-violet-500": "background-color:#8b5cf6;",
+        "bg-violet-600": "background-color:#7c3aed;",
+        "bg-violet-700": "background-color:#6d28d9;",
+        "bg-violet-900": "background-color:#4c1d95;",
+        "bg-violet-950": "background-color:#2e1065;",
         # Text colors
         "text-white": "color:#ffffff;",
         "text-black": "color:#000000;",
@@ -246,6 +480,37 @@ class RenderEngine:
         "text-purple-600": "color:#9333ea;",
         "text-indigo-600": "color:#4f46e5;",
         "text-emerald-600": "color:#059669;",
+        # Neutral text
+        "text-neutral-50":  "color:#fafafa;",
+        "text-neutral-100": "color:#f5f5f5;",
+        "text-neutral-200": "color:#e5e5e5;",
+        "text-neutral-300": "color:#d4d4d4;",
+        "text-neutral-400": "color:#a3a3a3;",
+        "text-neutral-500": "color:#737373;",
+        "text-neutral-600": "color:#525252;",
+        "text-neutral-700": "color:#404040;",
+        "text-neutral-800": "color:#262626;",
+        "text-neutral-900": "color:#171717;",
+        "text-neutral-950": "color:#0a0a0a;",
+        # Zinc text
+        "text-zinc-300": "color:#d4d4d8;",
+        "text-zinc-400": "color:#a1a1aa;",
+        "text-zinc-500": "color:#71717a;",
+        "text-zinc-600": "color:#52525b;",
+        "text-zinc-700": "color:#3f3f46;",
+        "text-zinc-900": "color:#18181b;",
+        # Extended colour text
+        "text-green-400":  "color:#4ade80;",
+        "text-green-700":  "color:#15803d;",
+        "text-green-800":  "color:#166534;",
+        "text-blue-300":   "color:#93c5fd;",
+        "text-amber-300":  "color:#fcd34d;",
+        "text-amber-400":  "color:#fbbf24;",
+        "text-amber-500":  "color:#f59e0b;",
+        "text-violet-400": "color:#a78bfa;",
+        "text-violet-500": "color:#8b5cf6;",
+        "text-violet-600": "color:#7c3aed;",
+        "text-red-400":    "color:#f87171;",
         # Font size
         "text-xs": "font-size:.75rem; line-height:1rem;",
         "text-sm": "font-size:.875rem; line-height:1.25rem;",
@@ -267,6 +532,7 @@ class RenderEngine:
         "font-semibold": "font-weight:600;",
         "font-bold": "font-weight:700;",
         "font-extrabold": "font-weight:800;",
+        "font-black": "font-weight:900;",
         # Text alignment
         "text-left": "text-align:left;",
         "text-center": "text-align:center;",
@@ -387,8 +653,8 @@ class RenderEngine:
         "pb-1": "padding-bottom:.25rem;", "pb-2": "padding-bottom:.5rem;",
         "pb-3": "padding-bottom:.75rem;", "pb-4": "padding-bottom:1rem;",
         "pb-5": "padding-bottom:1.25rem;", "pb-6": "padding-bottom:1.5rem;",
-        "pb-8": "padding-bottom:2rem;",  "pb-10": "padding-bottom:2.5rem;",
-        "pb-12": "padding-bottom:3rem;",
+        "pb-7": "padding-bottom:1.75rem;", "pb-8": "padding-bottom:2rem;",
+        "pb-10": "padding-bottom:2.5rem;", "pb-12": "padding-bottom:3rem;",
         "pl-2": "padding-left:.5rem;",  "pl-3": "padding-left:.75rem;",
         "pl-4": "padding-left:1rem;",   "pl-5": "padding-left:1.25rem;",
         "pl-6": "padding-left:1.5rem;", "pl-8": "padding-left:2rem;",
@@ -411,11 +677,14 @@ class RenderEngine:
         "my-2": "margin-top:.5rem; margin-bottom:.5rem;",
         "my-4": "margin-top:1rem; margin-bottom:1rem;",
         "my-6": "margin-top:1.5rem; margin-bottom:1.5rem;",
-        "mt-1": "margin-top:.25rem;", "mt-2": "margin-top:.5rem;",
-        "mt-3": "margin-top:.75rem;", "mt-4": "margin-top:1rem;",
+        "mt-0.5": "margin-top:.125rem;", "mt-1": "margin-top:.25rem;",
+        "mt-2": "margin-top:.5rem;", "mt-3": "margin-top:.75rem;",
+        "mt-4": "margin-top:1rem;", "mt-5": "margin-top:1.25rem;",
         "mt-6": "margin-top:1.5rem;", "mt-8": "margin-top:2rem;",
-        "mb-1": "margin-bottom:.25rem;", "mb-2": "margin-bottom:.5rem;",
-        "mb-3": "margin-bottom:.75rem;", "mb-4": "margin-bottom:1rem;",
+        "mt-10": "margin-top:2.5rem;", "mt-12": "margin-top:3rem;",
+        "mb-0.5": "margin-bottom:.125rem;", "mb-1": "margin-bottom:.25rem;",
+        "mb-2": "margin-bottom:.5rem;", "mb-3": "margin-bottom:.75rem;",
+        "mb-4": "margin-bottom:1rem;", "mb-5": "margin-bottom:1.25rem;",
         "mb-6": "margin-bottom:1.5rem;", "mb-8": "margin-bottom:2rem;",
         "mb-10": "margin-bottom:2.5rem;", "mb-12": "margin-bottom:3rem;",
         "ml-1": "margin-left:.25rem;", "ml-2": "margin-left:.5rem;",
@@ -423,6 +692,9 @@ class RenderEngine:
         "ml-auto": "margin-left:auto;",
         "mr-1": "margin-right:.25rem;", "mr-2": "margin-right:.5rem;",
         "mr-3": "margin-right:.75rem;", "mr-4": "margin-right:1rem;",
+        # Negative margins (bottom-sheet overlap)
+        "-mt-2": "margin-top:-.5rem;", "-mt-3": "margin-top:-.75rem;",
+        "-mt-4": "margin-top:-1rem;",  "-mt-5": "margin-top:-1.25rem;",
         # Flex — extended
         "flex-[2]": "flex:2 2 0%;",
         "flex-[3]": "flex:3 3 0%;",
@@ -475,6 +747,7 @@ class RenderEngine:
         "rounded-full": "border-radius:9999px;",
         "rounded-t-xl": "border-top-left-radius:.75rem; border-top-right-radius:.75rem;",
         "rounded-t-2xl": "border-top-left-radius:1rem; border-top-right-radius:1rem;",
+        "rounded-t-3xl": "border-top-left-radius:1.5rem; border-top-right-radius:1.5rem;",
         "rounded-b-xl": "border-bottom-left-radius:.75rem; border-bottom-right-radius:.75rem;",
         # Border
         "border": "border:1px solid #e5e7eb;",
@@ -485,8 +758,31 @@ class RenderEngine:
         "border-gray-100": "border-color:#f3f4f6;",
         "border-gray-200": "border-color:#e5e7eb;",
         "border-gray-300": "border-color:#d1d5db;",
+        "border-gray-700": "border-color:#374151;",
+        "border-gray-800": "border-color:#1f2937;",
+        "border-gray-900": "border-color:#111827;",
+        "border-neutral-100": "border-color:#f5f5f5;",
+        "border-neutral-200": "border-color:#e5e5e5;",
+        "border-neutral-300": "border-color:#d4d4d4;",
+        "border-neutral-400": "border-color:#a3a3a3;",
+        "border-neutral-500": "border-color:#737373;",
+        "border-neutral-600": "border-color:#525252;",
+        "border-neutral-700": "border-color:#404040;",
+        "border-neutral-800": "border-color:#262626;",
+        "border-neutral-900": "border-color:#171717;",
+        "border-zinc-600": "border-color:#52525b;",
+        "border-zinc-700": "border-color:#3f3f46;",
+        "border-zinc-800": "border-color:#27272a;",
+        "border-zinc-900": "border-color:#18181b;",
+        "border-white":   "border-color:#ffffff;",
+        "border-green-500": "border-color:#22c55e;",
+        "border-green-700": "border-color:#15803d;",
+        "border-green-800": "border-color:#166534;",
+        "border-green-900": "border-color:#14532d;",
         "border-blue-200": "border-color:#bfdbfe;",
         "border-blue-500": "border-color:#3b82f6;",
+        "border-violet-500": "border-color:#8b5cf6;",
+        "border-red-500":    "border-color:#ef4444;",
         # Shadows
         "shadow-sm": "box-shadow:0 1px 2px rgba(0,0,0,.05);",
         "shadow": "box-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);",
@@ -544,6 +840,295 @@ class RenderEngine:
     # Internal rendering
     # ------------------------------------------------------------------ #
 
+    # ------------------------------------------------------------------ #
+    # Native capability mock panels
+    # ------------------------------------------------------------------ #
+
+    _NATIVE_CARD = (
+        'style="border:1px solid #e0e7ff;border-left:4px solid #6366f1;'
+        'border-radius:12px;margin:8px 12px;padding:12px;background:#f5f3ff;"'
+    )
+    _NATIVE_TITLE_ROW = 'style="display:flex;align-items:center;gap:6px;margin-bottom:10px;"'
+    _NATIVE_BADGE = (
+        'style="margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.06em;'
+        'color:#6366f1;background:#e0e7ff;padding:2px 7px;border-radius:4px;"'
+    )
+    _NATIVE_LABEL = 'style="font-size:13px;font-weight:600;color:#374151;"'
+    _NATIVE_INFO = (
+        'style="font-family:monospace;font-size:11px;color:#6b7280;'
+        'background:#ede9fe;border-radius:6px;padding:5px 8px;margin-bottom:8px;"'
+    )
+    _NATIVE_BTN_ROW = 'style="display:flex;gap:6px;flex-wrap:wrap;"'
+    _NATIVE_BTN = (
+        'style="font-size:11px;padding:5px 10px;border-radius:8px;'
+        'border:1px solid #6366f1;background:#eef2ff;color:#4338ca;'
+        'cursor:pointer;font-family:inherit;"'
+    )
+    _NATIVE_BTN_ERR = (
+        'style="font-size:11px;padding:5px 10px;border-radius:8px;'
+        'border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;'
+        'cursor:pointer;font-family:inherit;"'
+    )
+
+    def _js(self, v) -> str:
+        """Format a Python value as a JS argument literal."""
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        s = str(v).replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{s}'"
+
+    def _sim_btn(self, label: str, handler: str, *args) -> str:
+        """Build a simulate button that calls handleClick(handler, *args)."""
+        if not handler:
+            return ""
+        js_args = ", ".join([f"'{handler}'"] + [self._js(a) for a in args])
+        return f'<button type="button" {self._NATIVE_BTN} onclick="handleClick({js_args})">{label}</button>'
+
+    def _sim_btn_err(self, label: str, handler: str, *args) -> str:
+        if not handler:
+            return ""
+        js_args = ", ".join([f"'{handler}'"] + [self._js(a) for a in args])
+        return f'<button type="button" {self._NATIVE_BTN_ERR} onclick="handleClick({js_args})">{label}</button>'
+
+    def _render_native_mock(self, ctype: str, props: dict) -> str:
+        """Render a native capability as a simulation panel for p2m run."""
+        cap = ctype.replace("Native_", "")
+
+        icons = {
+            "Camera": "📷", "Location": "📍", "PushNotifications": "🔔",
+            "Biometrics": "🔐", "Bluetooth": "🔵", "InAppPurchase": "💳",
+            "Sensors": "📱", "SecureStorage": "🔑", "Share": "📤",
+        }
+        icon = icons.get(cap, "⚙️")
+
+        # Title row
+        title_html = (
+            f'<div {self._NATIVE_TITLE_ROW}>'
+            f'<span style="font-size:18px;">{icon}</span>'
+            f'<span {self._NATIVE_LABEL}>{cap.replace("InAppPurchase", "In-App Purchase").replace("PushNotifications", "Push Notifications").replace("SecureStorage", "Secure Storage")}</span>'
+            f'<span {self._NATIVE_BADGE}>NATIVE</span>'
+            f'</div>'
+        )
+
+        # Per-capability content + simulate buttons
+        content = ""
+        buttons = ""
+
+        if cap == "Camera":
+            mode = props.get("mode", "photo")
+            on_capture = props.get("on_capture") or ""
+            on_error = props.get("on_error") or ""
+            content = (
+                '<div style="background:#111;border-radius:8px;height:110px;'
+                'display:flex;align-items:center;justify-content:center;margin-bottom:8px;">'
+                '<span style="color:#555;font-size:13px;">Camera Preview</span></div>'
+            )
+            btns = [self._sim_btn("📸 Simulate Photo", on_capture, "mock://photo_1.jpg", "photo")]
+            if mode in ("video", "both"):
+                btns.append(self._sim_btn("🎥 Simulate Video", on_capture, "mock://video_1.mp4", "video"))
+            if on_error:
+                btns.append(self._sim_btn_err("❌ Simulate Error", on_error, "Camera permission denied"))
+            buttons = "".join(btns)
+
+        elif cap == "Location":
+            on_update = props.get("on_update") or ""
+            on_error = props.get("on_error") or ""
+            watch = props.get("watch", False)
+            accuracy = props.get("accuracy", "high")
+            content = f'<div {self._NATIVE_INFO}>watch: {watch} · accuracy: {accuracy}<br>lat: — &nbsp; lng: — &nbsp; acc: —</div>'
+            btns = [self._sim_btn("📍 Simulate GPS Fix", on_update, -23.5505, -46.6333, 10.0)]
+            if watch:
+                btns.append(self._sim_btn("🔄 Simulate Update", on_update, -23.5512, -46.6341, 8.5))
+            if on_error:
+                btns.append(self._sim_btn_err("❌ Simulate Error", on_error, "Location permission denied"))
+            buttons = "".join(btns)
+
+        elif cap == "PushNotifications":
+            on_register = props.get("on_register") or ""
+            on_message = props.get("on_message") or ""
+            on_error = props.get("on_error") or ""
+            content = f'<div {self._NATIVE_INFO}>Token: —<br>Last message: —</div>'
+            btns = [
+                self._sim_btn("🔑 Simulate Register", on_register, "ExponentPushToken[mock-ABCD1234]"),
+                self._sim_btn("🔔 Simulate Notification", on_message, "Nova mensagem", "Você tem uma nova notificação!", "{}"),
+            ]
+            if on_error:
+                btns.append(self._sim_btn_err("❌ Simulate Error", on_error, "Notification permission denied"))
+            buttons = "".join(btns)
+
+        elif cap == "Biometrics":
+            on_success = props.get("on_success") or ""
+            on_failure = props.get("on_failure") or ""
+            prompt = props.get("prompt", "Confirm your identity")
+            content = (
+                '<div style="text-align:center;padding:10px 0;">'
+                '<span style="font-size:36px;">👆</span>'
+                f'<p style="font-size:11px;color:#6b7280;margin-top:4px;">{self._escape(prompt)}</p>'
+                '</div>'
+            )
+            btns = []
+            if on_success:
+                btns.append(self._sim_btn("✅ Simulate Success", on_success))
+            if on_failure:
+                btns.append(self._sim_btn_err("❌ Simulate Failure", on_failure, "UserCancel"))
+            buttons = "".join(btns)
+
+        elif cap == "Bluetooth":
+            on_scan = props.get("on_scan_result") or ""
+            on_connect = props.get("on_connect") or ""
+            on_data = props.get("on_data") or ""
+            on_error = props.get("on_error") or ""
+            svc = props.get("service_uuid", "")
+            content = f'<div {self._NATIVE_INFO}>service_uuid: {svc or "any"}<br>Status: idle</div>'
+            btns = [
+                self._sim_btn("📡 Device Found", on_scan, "MockDevice-01", "mock-ble-001", -70),
+                self._sim_btn("🔗 Connect", on_connect, "mock-ble-001"),
+                self._sim_btn("📩 Receive Data", on_data, "mock-ble-001", "FFE1", "hello"),
+            ]
+            if on_error:
+                btns.append(self._sim_btn_err("❌ Error", on_error, "Bluetooth unavailable"))
+            buttons = "".join(btns)
+
+        elif cap == "InAppPurchase":
+            on_purchased = props.get("on_purchased") or ""
+            on_restored = props.get("on_restored") or ""
+            on_error = props.get("on_error") or ""
+            product_id = props.get("product_id", "")
+            product_type = props.get("product_type", "non_consumable")
+            content = f'<div {self._NATIVE_INFO}>product: {product_id}<br>type: {product_type}</div>'
+            btns = [self._sim_btn("💳 Simulate Purchase", on_purchased, product_id, "mock-txn-12345")]
+            if on_restored:
+                btns.append(self._sim_btn("♻️ Simulate Restore", on_restored, product_id))
+            if on_error:
+                btns.append(self._sim_btn_err("❌ Simulate Cancel", on_error, "Purchase cancelled"))
+            buttons = "".join(btns)
+
+        elif cap == "Sensors":
+            on_update = props.get("on_update") or ""
+            sensor_type = props.get("sensor_type", "accelerometer")
+            interval = props.get("interval", 100)
+            content = f'<div {self._NATIVE_INFO}>{sensor_type} · {interval}ms<br>x: — &nbsp; y: — &nbsp; z: —</div>'
+            btns = [
+                self._sim_btn("📡 Simulate Update", on_update, 0.5, 9.8, 0.1),
+                self._sim_btn("📳 Simulate Shake", on_update, 18.2, -15.7, 3.4),
+            ]
+            buttons = "".join(btns)
+
+        elif cap == "SecureStorage":
+            on_read = props.get("on_read") or ""
+            on_write = props.get("on_write") or ""
+            content = f'<div {self._NATIVE_INFO}>Keychain/Keystore (in-memory in dev)<br>Use .read() / .write() from handlers</div>'
+            btns = [
+                self._sim_btn("📖 Simulate Read", on_read, "auth_token", "mock-secret-value"),
+                self._sim_btn("💾 Simulate Write", on_write, "auth_token", True),
+            ]
+            buttons = "".join(btns)
+
+        elif cap == "Share":
+            on_complete = props.get("on_complete") or ""
+            content = f'<div {self._NATIVE_INFO}>OS share sheet · use share.send() from handlers</div>'
+            btns = [
+                self._sim_btn("✅ Simulate Complete", on_complete, True),
+                self._sim_btn_err("❌ Simulate Cancel", on_complete, False),
+            ]
+            buttons = "".join(btns)
+
+        btn_row = f'<div {self._NATIVE_BTN_ROW}>{buttons}</div>' if buttons else ""
+        return f'<div {self._NATIVE_CARD}>{title_html}{content}{btn_row}</div>'
+
+    # ------------------------------------------------------------------ #
+    # Map rendering (Leaflet.js)
+    # ------------------------------------------------------------------ #
+
+    # Height fallback map: Tailwind h-* classes → px values
+    _H_TO_PX = {
+        "h-32": "128px", "h-36": "144px", "h-40": "160px", "h-44": "176px",
+        "h-48": "192px", "h-52": "208px", "h-56": "224px", "h-60": "240px",
+        "h-64": "256px", "h-72": "288px", "h-80": "320px", "h-96": "384px",
+        "h-screen": "100vh", "h-full": "100%",
+    }
+
+    def _render_map(self, props: Dict[str, Any]) -> str:
+        """Render a native Map as a real Leaflet.js map for p2m run."""
+        map_id = "p2m-map-" + _uuid.uuid4().hex[:8]
+
+        # Build config dict — convert tuples/lists to plain lists for JSON
+        def _fl(v):
+            return float(v)
+
+        center = props.get("center") or [-23.5505, -46.6333]
+        center = [_fl(center[0]), _fl(center[1])]
+
+        def _route(r):
+            return {
+                "coordinates": [[_fl(c[0]), _fl(c[1])] for c in (r.get("coordinates") or [])],
+                "color":  r.get("color", "#3b82f6"),
+                "width":  r.get("width", 4),
+                "dashed": bool(r.get("dashed", False)),
+            }
+
+        def _circle(c):
+            return {
+                "lat":          _fl(c.get("lat", 0)),
+                "lng":          _fl(c.get("lng", 0)),
+                "radius":       c.get("radius", 500),
+                "color":        c.get("color", "#3b82f6"),
+                "fill_opacity": c.get("fill_opacity", 0.15),
+            }
+
+        def _marker(m):
+            return {
+                "id":          str(m.get("id", m.get("title", ""))),
+                "lat":         _fl(m.get("lat", 0)),
+                "lng":         _fl(m.get("lng", 0)),
+                "title":       str(m.get("title", "")),
+                "description": str(m.get("description", "")),
+                "color":       str(m.get("color", "red")),
+            }
+
+        markers = [_marker(m) for m in (props.get("markers") or []) if isinstance(m, dict)]
+        routes  = [_route(r)  for r in (props.get("routes")  or []) if isinstance(r, dict)]
+        circles = [_circle(c) for c in (props.get("circles") or []) if isinstance(c, dict)]
+
+        cfg = {
+            "center":           center,
+            "zoom":             int(props.get("zoom", 13)),
+            "mapType":          str(props.get("map_type", "standard")),
+            "markers":          markers,
+            "routes":           routes,
+            "circles":          circles,
+            "showUserLocation": bool(props.get("show_user_location", False)),
+            "interactive":      bool(props.get("interactive", True)),
+            "onMarkerPress":    str(props.get("on_marker_press") or ""),
+            "onMapPress":       str(props.get("on_map_press") or ""),
+            "onRegionChange":   str(props.get("on_region_change") or ""),
+        }
+
+        # Height: prefer h-* from class_, fall back to 256px
+        raw_class = props.get("class_", "") or props.get("class", "")
+        height = "256px"
+        for cls in raw_class.split():
+            if cls in self._H_TO_PX:
+                height = self._H_TO_PX[cls]
+                break
+            # also check TAILWIND_CLASSES (covers h-16 .. h-64 already)
+            tw = self.TAILWIND_CLASSES.get(cls, "")
+            if tw.startswith("height:"):
+                height = tw.split("height:")[-1].rstrip(";").strip()
+                break
+
+        cfg_json = _json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
+
+        return (
+            f'<div id="{map_id}" data-p2m-map="true"'
+            f' style="width:100%;height:{height};border-radius:12px;'
+            f'overflow:hidden;z-index:0;position:relative;"></div>'
+            f'<script id="{map_id}-cfg" type="application/json">'
+            f'{cfg_json}</script>'
+        )
+
     def _render_component(self, component: Dict[str, Any]) -> str:
         if not isinstance(component, dict):
             return str(component)
@@ -551,6 +1136,14 @@ class RenderEngine:
         ctype = component.get("type", "div")
         props = component.get("props", {})
         children = component.get("children", [])
+
+        # Native Map — renders a real Leaflet.js map (not a mock panel)
+        if ctype == "Native_Map":
+            return self._render_map(props)
+
+        # Other native capabilities — render simulation panels
+        if ctype.startswith("Native_"):
+            return self._render_native_mock(ctype, props)
 
         tag, attrs = self._resolve_tag_attrs(ctype, props)
 

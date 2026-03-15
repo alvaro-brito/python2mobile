@@ -13,6 +13,7 @@ const translations = {
     },
     // Sidebar
     sidebar: {
+      resources: "Resources",
       gettingStarted: "Getting Started",
       installation: "Installation",
       commands: "Commands",
@@ -47,6 +48,7 @@ const translations = {
     },
     // Sidebar
     sidebar: {
+      resources: "Recursos",
       gettingStarted: "Primeiros Passos",
       installation: "Instalação",
       commands: "Comandos",

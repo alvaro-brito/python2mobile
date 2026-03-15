@@ -1,0 +1,20 @@
+[project]
+name = "ride_app"
+version = "0.1.0"
+entry = "main.py"
+
+[build]
+target = ["android", "ios", "flutter", "react-native"]
+generator = "flutter"
+llm_provider = "anthropic"
+llm_model = "claude-opus-4-6"
+output_dir = "./build"
+cache = true
+
+[devserver]
+port = 3005
+hot_reload = true
+mobile_frame = true
+
+[style]
+system = "tailwind"
